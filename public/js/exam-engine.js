@@ -4,6 +4,7 @@ class ExamEngine {
   constructor() {
     this.config = this.loadConfig();
     this.questions = this.loadQuestions();
+    this.activeQuestions = null;
     this.currentQuestionIndex = 0;
     this.student = null;
     this.answers = {};
@@ -65,6 +66,74 @@ class ExamEngine {
     localStorage.setItem('cbt_questions', JSON.stringify(this.questions));
   }
 
+  matchesSubject(qSub, targetSub) {
+    const a = String(qSub || '').trim().toLowerCase();
+    const b = String(targetSub || '').trim().toLowerCase();
+    if (!a || !b) return false;
+    return a === b || a.includes(b) || b.includes(a);
+  }
+
+  matchesClassLevel(qClass, targetClass) {
+    const qcRaw = String(qClass || '').trim().toUpperCase();
+    const tcRaw = String(targetClass || '').trim().toUpperCase();
+    if (!qcRaw || qcRaw === 'SEMUA' || qcRaw === 'SEMUA KELAS' || qcRaw === 'ALL') return true;
+    if (!tcRaw || tcRaw === 'SEMUA' || tcRaw === 'SEMUA KELAS' || tcRaw === 'ALL') return true;
+
+    const splitTokens = (str) => str
+      .split(/[,;/]+/)
+      .map(s => s.trim().replace(/^KELAS\s+/i, '').replace(/\s+/g, ''))
+      .filter(Boolean);
+
+    const qTokens = splitTokens(qcRaw);
+    const tTokens = splitTokens(tcRaw);
+    if (qTokens.length === 0 || tTokens.length === 0) return true;
+
+    return qTokens.some(qc => tTokens.some(tc => {
+      if (qc === tc) return true;
+      const qcGrade = (qc.match(/^(\d+)/) || [])[1];
+      const tcGrade = (tc.match(/^(\d+)/) || [])[1];
+      if (qcGrade && tcGrade && qcGrade === tcGrade) {
+        if (qc === qcGrade || tc === tcGrade) return true;
+      }
+      return false;
+    }));
+  }
+
+  getQuestionsForExam(subjectOverride = null, classOverride = null) {
+    const targetSubject = subjectOverride || (this.config && this.config.subject) || '';
+    const targetClass = classOverride || (this.student && this.student.class) || (this.config && this.config.targetClass) || 'Semua Kelas';
+
+    const matched = this.questions.filter(q => {
+      const qSub = String(q.subject || '').trim();
+      if (!qSub || qSub.toLowerCase() === 'umum') return false;
+      if (!this.matchesSubject(qSub, targetSubject)) return false;
+      return this.matchesClassLevel(q.classLevel || 'Semua Kelas', targetClass);
+    });
+
+    if (matched.length > 0) {
+      return { questions: matched, isFallback: false };
+    }
+
+    const subjectOnly = this.questions.filter(q => {
+      const qSub = String(q.subject || '').trim();
+      if (!qSub || qSub.toLowerCase() === 'umum') return false;
+      return this.matchesSubject(qSub, targetSubject);
+    });
+
+    if (subjectOnly.length > 0) {
+      return { questions: subjectOnly, isFallback: false };
+    }
+
+    return { questions: [...this.questions], isFallback: true };
+  }
+
+  getExamQuestions() {
+    if (Array.isArray(this.activeQuestions) && this.activeQuestions.length > 0) {
+      return this.activeQuestions;
+    }
+    return this.getQuestionsForExam().questions;
+  }
+
   checkActiveSession() {
     const session = localStorage.getItem('cbt_active_session');
     if (session) {
@@ -89,7 +158,11 @@ class ExamEngine {
     this.isExamActive = true;
     this.remainingSeconds = (this.config.durationMinutes || 80) * 60;
 
-    this.questions.forEach(q => {
+    const targetClass = (studentData && studentData.class) || this.config.targetClass || 'Semua Kelas';
+    const examQResult = this.getQuestionsForExam(this.config.subject, targetClass);
+    this.activeQuestions = examQResult.questions;
+
+    this.activeQuestions.forEach(q => {
       const type = q.type || 'single';
       if (type === 'multiple') {
         this.answers[q.id] = { answer: [], doubt: false };
@@ -113,6 +186,17 @@ class ExamEngine {
     this.remainingSeconds = sessionData.remainingSeconds || (this.config.durationMinutes * 60);
     this.isExamActive = true;
 
+    if (Array.isArray(sessionData.activeQuestionIds) && sessionData.activeQuestionIds.length > 0) {
+      const restored = sessionData.activeQuestionIds
+        .map(id => this.questions.find(q => q.id === id))
+        .filter(Boolean);
+      this.activeQuestions = restored.length > 0
+        ? restored
+        : this.getQuestionsForExam(this.config.subject, this.student && this.student.class).questions;
+    } else {
+      this.activeQuestions = this.getQuestionsForExam(this.config.subject, this.student && this.student.class).questions;
+    }
+
     this.startTimer();
   }
 
@@ -122,6 +206,7 @@ class ExamEngine {
       student: this.student,
       answers: this.answers,
       currentQuestionIndex: this.currentQuestionIndex,
+      activeQuestionIds: this.getExamQuestions().map(q => q.id),
       remainingSeconds: this.remainingSeconds,
       cheatCount: this.cheatCount,
       cheatLogs: this.cheatLogs,
@@ -132,6 +217,7 @@ class ExamEngine {
 
   clearSession() {
     this.isExamActive = false;
+    this.activeQuestions = null;
     if (this.timerInterval) clearInterval(this.timerInterval);
     localStorage.removeItem('cbt_active_session');
   }
@@ -161,7 +247,8 @@ class ExamEngine {
   }
 
   getCurrentQuestion() {
-    return this.questions[this.currentQuestionIndex];
+    const activeQs = this.getExamQuestions();
+    return activeQs[this.currentQuestionIndex];
   }
 
   selectSingleAnswer(optionKey) {
@@ -224,14 +311,16 @@ class ExamEngine {
   }
 
   goToQuestion(index) {
-    if (index >= 0 && index < this.questions.length) {
+    const activeQs = this.getExamQuestions();
+    if (index >= 0 && index < activeQs.length) {
       this.currentQuestionIndex = index;
       this.saveSession();
     }
   }
 
   nextQuestion() {
-    if (this.currentQuestionIndex < this.questions.length - 1) {
+    const activeQs = this.getExamQuestions();
+    if (this.currentQuestionIndex < activeQs.length - 1) {
       this.currentQuestionIndex++;
       this.saveSession();
       return true;
@@ -266,11 +355,12 @@ class ExamEngine {
   }
 
   getAnswerSummary() {
+    const activeQs = this.getExamQuestions();
     let answered = 0;
     let doubt = 0;
     let unanswered = 0;
 
-    this.questions.forEach(q => {
+    activeQs.forEach(q => {
       const ans = this.answers[q.id];
       const hasAnswer = this.isQuestionAnswered(q);
 
@@ -284,7 +374,7 @@ class ExamEngine {
     });
 
     return {
-      total: this.questions.length,
+      total: activeQs.length,
       answered,
       doubt,
       unanswered
@@ -395,13 +485,14 @@ class ExamEngine {
   finishExam(reason = null) {
     if (!this.isExamActive) return;
 
+    const activeQs = this.getExamQuestions();
     let totalPointsEarned = 0;
     let maxPossiblePoints = 0;
     let correctCount = 0;
     let incorrectCount = 0;
     let unattemptedCount = 0;
 
-    const detailedAnswers = this.questions.map((q, qIdx) => {
+    const detailedAnswers = activeQs.map((q, qIdx) => {
       const type = q.type || 'single';
       const weight = q.weight || 10;
       maxPossiblePoints += weight;
@@ -519,7 +610,7 @@ class ExamEngine {
       correctCount,
       incorrectCount,
       unattemptedCount,
-      totalQuestions: this.questions.length,
+      totalQuestions: activeQs.length,
       finalScore: finalScore,
       cheatCount: this.cheatCount,
       cheatLogs: this.cheatLogs,

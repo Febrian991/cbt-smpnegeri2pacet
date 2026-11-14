@@ -138,6 +138,16 @@ class CBTAdmin {
     }
 
     try {
+      if (window.examEngine && Array.isArray(window.examEngine.questions)) {
+        window.examEngine.questions.forEach(q => {
+          if (q.subject && String(q.subject).trim().toLowerCase() !== 'umum') {
+            subjectsSet.add(String(q.subject).trim());
+          }
+        });
+      }
+    } catch (e) {}
+
+    try {
       const rawResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
       rawResults.forEach(r => {
         if (r.subject) subjectsSet.add(r.subject.trim());
@@ -147,20 +157,55 @@ class CBTAdmin {
     return Array.from(subjectsSet).filter(Boolean);
   }
 
+  getTeacherSubjectsList(teacher = null) {
+    const t = teacher || this.getCurrentTeacher();
+    if (!t || t.role === 'admin' || t.id === 'admin') return [];
+    return String(t.subject || '')
+      .split(/[,/]/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  parseTeacherClasses(classesStr) {
+    const raw = String(classesStr || "").trim().toUpperCase();
+    if (!raw || raw === "SEMUA" || raw === "SEMUA KELAS" || raw === "ALL") return [];
+    const result = [];
+    raw.split(/[,;/]+/).forEach(token => {
+      const part = token.trim().replace(/^KELAS\s+/i, '');
+      if (!part) return;
+      const mShort = part.match(/^(\d+)\s*([A-Z])\s*-\s*(?:\d+\s*)?([A-Z])$/);
+      if (mShort) {
+        const grade = mShort[1];
+        const startCode = mShort[2].charCodeAt(0);
+        const endCode = mShort[3].charCodeAt(0);
+        if (startCode <= endCode && endCode - startCode <= 10) {
+          for (let c = startCode; c <= endCode; c++) {
+            result.push(grade + String.fromCharCode(c));
+          }
+          return;
+        }
+      }
+      result.push(part.replace(/\s+/g, ''));
+    });
+    return [...new Set(result)];
+  }
+
   searchTeachers(query = "") {
     const q = String(query || "").trim().toLowerCase();
     if (!q) return this.teachers;
     return this.teachers.filter(t =>
       (t.name && t.name.toLowerCase().includes(q)) ||
       (t.nip && String(t.nip).toLowerCase().includes(q)) ||
-      (t.subject && t.subject.toLowerCase().includes(q))
+      (t.subject && t.subject.toLowerCase().includes(q)) ||
+      (t.classes && String(t.classes).toLowerCase().includes(q))
     );
   }
 
-  addTeacher({ name, nip, subject, pin }) {
+  addTeacher({ name, nip, subject, classes, pin }) {
     const cleanName = String(name || "").trim();
     const cleanNip = String(nip || "").trim();
     const cleanSubject = String(subject || "").trim();
+    const cleanClasses = String(classes || "").trim().toUpperCase();
     const cleanPin = String(pin || "guru123").trim();
 
     if (!cleanName || !cleanNip || !cleanSubject) {
@@ -178,6 +223,7 @@ class CBTAdmin {
       nip: cleanNip,
       name: cleanName,
       subject: cleanSubject,
+      classes: cleanClasses,
       role: "guru",
       pin: cleanPin
     };
@@ -201,7 +247,7 @@ class CBTAdmin {
     return { success: true, message: `Guru ${teacher.name} berhasil dihapus.` };
   }
 
-  updateTeacherProfile(teacherId, { name, nip, subject, pin }) {
+  updateTeacherProfile(teacherId, { name, nip, subject, classes, pin }) {
     let found = false;
     this.teachers = this.teachers.map(t => {
       if (t.id === teacherId) {
@@ -211,6 +257,7 @@ class CBTAdmin {
           name: name ? String(name).trim() : t.name,
           nip: nip ? String(nip).trim() : t.nip,
           subject: subject ? String(subject).trim() : t.subject,
+          classes: classes !== undefined ? String(classes).trim().toUpperCase() : (t.classes || ""),
           pin: pin ? String(pin).trim() : t.pin
         };
       }
@@ -343,6 +390,8 @@ class CBTAdmin {
   logout() {
     this.isAuthenticated = false;
     this.currentTeacher = null;
+    this.selectedSubjectFilter = 'ALL';
+    this.selectedClassFilter = 'ALL';
     try {
       localStorage.removeItem('cbt_logged_teacher_session');
       localStorage.removeItem('cbt_active_admin_tab');
@@ -385,12 +434,63 @@ class CBTAdmin {
     return window.examEngine.questions;
   }
 
+  getQuestionsFiltered(subjectFilter = 'ALL', classFilter = 'ALL') {
+    const all = window.examEngine ? window.examEngine.questions : [];
+    const cur = this.getCurrentTeacher();
+    const isAdmin = cur && (cur.role === 'admin' || cur.id === 'admin');
+    const teacherSubjects = this.getTeacherSubjectsList(cur);
+
+    const matchesSub = (qSub, target) => (window.examEngine && window.examEngine.matchesSubject)
+      ? window.examEngine.matchesSubject(qSub, target)
+      : String(qSub || '').toLowerCase() === String(target || '').toLowerCase();
+
+    const matchesCls = (qCls, target) => (window.examEngine && window.examEngine.matchesClassLevel)
+      ? window.examEngine.matchesClassLevel(qCls, target)
+      : true;
+
+    return all.filter(q => {
+      const qSub = String(q.subject || 'Umum').trim();
+      const qCls = String(q.classLevel || 'Semua Kelas').trim();
+
+      if (!isAdmin && teacherSubjects.length > 0) {
+        if (!q.subject || qSub.toLowerCase() === 'umum') return false;
+        const ownsSubject = teacherSubjects.some(ts => matchesSub(qSub, ts));
+        if (!ownsSubject) return false;
+
+        const teacherClasses = cur && cur.classes ? this.parseTeacherClasses(cur.classes) : [];
+        if (teacherClasses.length > 0) {
+          const matchesAssignedClass = matchesCls(qCls, teacherClasses.join(', '));
+          if (!matchesAssignedClass) return false;
+        }
+      }
+
+      if (subjectFilter && subjectFilter !== 'ALL') {
+        if (subjectFilter === 'UMUM') {
+          if (q.subject && qSub.toLowerCase() !== 'umum') return false;
+        } else {
+          if (!q.subject || qSub.toLowerCase() === 'umum') return false;
+          if (!matchesSub(qSub, subjectFilter)) return false;
+        }
+      }
+
+      if (classFilter && classFilter !== 'ALL') {
+        if (!matchesCls(qCls, classFilter)) return false;
+      }
+
+      return true;
+    });
+  }
+
   addQuestion(questionData) {
     const questions = [...window.examEngine.questions];
-    const newId = questions.length > 0 ? Math.max(...questions.map(q => q.id)) + 1 : 1;
+    const newId = questions.length > 0 ? Math.max(...questions.map(q => Number(q.id) || 0)) + 1 : 1;
+    const cur = this.getCurrentTeacher();
 
     let newQ = {
       id: newId,
+      subject: String(questionData.subject || "Umum").trim(),
+      classLevel: String(questionData.classLevel || "Semua Kelas").trim(),
+      createdBy: questionData.createdBy || (cur ? cur.name : "Proktor Utama / Admin"),
       type: questionData.type || 'single',
       question: questionData.question,
       image: questionData.image || "",
@@ -421,22 +521,43 @@ class CBTAdmin {
     window.examEngine.saveQuestions([...DEFAULT_QUESTIONS]);
   }
 
-  exportQuestionsJSON() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.examEngine.questions, null, 2));
+  exportQuestionsJSON(subjectFilter = 'ALL', classFilter = 'ALL') {
+    const toExport = this.getQuestionsFiltered(subjectFilter, classFilter);
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(toExport, null, 2));
     const downloadAnchor = document.createElement('a');
+    const slug = subjectFilter && subjectFilter !== 'ALL'
+      ? '_' + String(subjectFilter).toLowerCase().replace(/[^a-z0-9]+/g, '_')
+      : '';
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `bank_soal_ujian_${Date.now()}.json`);
+    downloadAnchor.setAttribute("download", `bank_soal_ujian${slug}_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
   }
 
-  importQuestionsJSON(jsonString) {
+  importQuestionsJSON(jsonString, defaultSubject = null, defaultClassLevel = null) {
     try {
       const parsed = JSON.parse(jsonString);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        window.examEngine.saveQuestions(parsed);
-        return { success: true, count: parsed.length };
+        const existing = [...window.examEngine.questions];
+        let maxId = existing.length > 0 ? Math.max(...existing.map(q => Number(q.id) || 0)) : 0;
+        const fallbackSub = (defaultSubject && defaultSubject !== 'ALL' && defaultSubject !== 'UMUM') ? defaultSubject : 'Umum';
+        const fallbackCls = (defaultClassLevel && defaultClassLevel !== 'ALL') ? defaultClassLevel : 'Semua Kelas';
+
+        const cur = this.getCurrentTeacher();
+        const normalized = parsed.map(item => {
+          maxId += 1;
+          return {
+            ...item,
+            id: maxId,
+            subject: item.subject ? String(item.subject).trim() : fallbackSub,
+            classLevel: item.classLevel ? String(item.classLevel).trim() : fallbackCls,
+            createdBy: item.createdBy || (cur ? cur.name : "Proktor Utama / Admin")
+          };
+        });
+
+        window.examEngine.saveQuestions([...existing, ...normalized]);
+        return { success: true, count: normalized.length };
       }
       return { success: false, message: "Format file JSON tidak valid." };
     } catch (e) {
@@ -534,8 +655,14 @@ class CBTAdmin {
       });
     }
 
+    const teacherClasses = (!isSuperAdmin && cur && cur.classes) ? this.parseTeacherClasses(cur.classes) : [];
     if (cf && cf !== 'ALL') {
-      filtered = filtered.filter(r => r.student?.class === cf);
+      filtered = filtered.filter(r => r.student?.class && String(r.student.class).trim().toUpperCase() === String(cf).trim().toUpperCase());
+    } else if (teacherClasses.length > 0) {
+      filtered = filtered.filter(r => {
+        const stuClass = String(r.student?.class || '').trim().toUpperCase();
+        return teacherClasses.some(tc => stuClass === tc || stuClass.startsWith(tc));
+      });
     }
 
     return filtered.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0));
@@ -707,7 +834,7 @@ class CBTAdmin {
       return;
     }
 
-    this.populateReportHTML(reportElement, results, subjectFilter);
+    this.populateReportHTML(reportElement, results, subjectFilter, classFilter);
 
     reportElement.classList.remove('hidden');
     document.body.classList.add('printing-report');
@@ -743,14 +870,18 @@ class CBTAdmin {
     }
   }
 
-  populateReportHTML(el, results, subjectFilter) {
-    const analytics = this.getExamAnalytics(subjectFilter);
+  populateReportHTML(el, results, subjectFilter, classFilter = null) {
+    const analytics = this.getExamAnalytics(subjectFilter, classFilter);
     const cur = this.getCurrentTeacher();
     const teacherName = cur ? cur.name : "Guru Mata Pelajaran";
     const teacherNip = cur ? (cur.nip || "—") : "—";
     const subjectName = (subjectFilter && subjectFilter !== 'ALL')
       ? subjectFilter
       : (cur && cur.role !== 'admin' ? cur.subject : window.examEngine.config.subject);
+    const cf = classFilter || this.selectedClassFilter;
+    const classLabel = (cf && cf !== 'ALL')
+      ? ` • Kelas ${cf}`
+      : (cur && cur.role !== 'admin' && cur.classes ? ` • Kelas ${this.parseTeacherClasses(cur.classes).join(', ')}` : '');
     const cfg = this.getSchoolConfig();
 
     const logoLeftHtml = cfg.logoLeft
@@ -771,7 +902,7 @@ class CBTAdmin {
             <div style="font-size:18px; font-weight:900; color:#0f172a; text-transform:uppercase; letter-spacing:0.8px;">${cfg.schoolName}</div>
             <div style="font-size:10px; color:#334155; font-weight:600;">${cfg.schoolAddress}</div>
             <div style="font-size:13px; font-weight:900; text-transform:uppercase; margin-top:4px; color:#1e3a8a;">LEMBAR REKAPITULASI RESMI HASIL UJIAN SEKOLAH</div>
-            <div style="font-size:11px; font-weight:700; color:#334155;">${window.examEngine.config.examTitle} • Mapel: ${subjectName}</div>
+            <div style="font-size:11px; font-weight:700; color:#334155;">${window.examEngine.config.examTitle} • Mapel: ${subjectName}${classLabel}</div>
           </div>
           ${logoRightHtml}
         </div>
@@ -890,13 +1021,14 @@ class CBTAdmin {
     }
     const headers = [
       ["TEMPLATE PANGKALAN DATA GURU CBT - SMP NEGERI 2 PACET"],
-      ["Petunjuk: Jangan ubah baris judul kolom di baris ke-3. Isi data guru mulai baris ke-4."],
-      ["NIP / ID Pengguna (Wajib - Untuk Login)", "Nama Lengkap Guru & Gelar (Wajib)", "Mata Pelajaran yang Diampu (Wajib)", "Password / PIN Login (Wajib)"],
-      ["198003152006041002", "Budi Santoso, S.Pd.", "Bahasa Indonesia", "guru123"],
-      ["197512022000032001", "Siti Rahmawati, M.Pd.", "Matematika", "guru123"],
-      ["198506102010011003", "Dedi Irawan, S.Pd.", "Bahasa Inggris", "guru123"],
-      ["198201152007012004", "Nurul Hidayah, M.Si.", "Ilmu Pengetahuan Alam (IPA)", "guru123"],
-      ["198708222011011005", "Agus Pratama, S.Pd.", "Ilmu Pengetahuan Sosial (IPS)", "guru123"]
+      ["Petunjuk: Jangan ubah baris judul kolom di baris ke-3. Isi data guru mulai baris ke-4. Kolom Kelas Diampu boleh dikosongkan jika mengajar semua kelas."],
+      ["NIP / ID Pengguna (Wajib - Untuk Login)", "Nama Lengkap Guru & Gelar (Wajib)", "Mata Pelajaran yang Diampu (Wajib)", "Password / PIN Login (Wajib)", "Kelas yang Diampu (Opsional, misal: 7B, 7C)"],
+      ["198003152006041002", "Budi Santoso, S.Pd.", "Bahasa Indonesia", "guru123", ""],
+      ["197512022000032001", "Siti Rahmawati, M.Pd.", "Matematika", "guru123", ""],
+      ["198506102010011003", "Rusi, S.Pd.", "Ilmu Pengetahuan Alam (IPA)", "guru123", "7B, 7C"],
+      ["198201152007012004", "Ai Nurhasanah, S.Pd.", "Ilmu Pengetahuan Alam (IPA)", "guru123", "7A"],
+      ["198708222011011005", "Yeyen, S.Pd.", "Ilmu Pengetahuan Alam (IPA)", "guru123", "8A, 8B"],
+      ["198809122014022006", "Desy, S.Pd.", "Ilmu Pengetahuan Alam (IPA)", "guru123", "9A, 9B"]
     ];
 
     const wb = XLSX.utils.book_new();
@@ -905,7 +1037,8 @@ class CBTAdmin {
       { wch: 28 },
       { wch: 32 },
       { wch: 32 },
-      { wch: 20 }
+      { wch: 20 },
+      { wch: 34 }
     ];
     XLSX.utils.book_append_sheet(wb, ws, "Daftar Guru");
     XLSX.writeFile(wb, "Template_Daftar_Guru_CBT_SMPN2Pacet.xlsx");
@@ -948,18 +1081,21 @@ class CBTAdmin {
         const rawName = row[1];
         const rawSubject = row[2];
         const rawPin = row[3];
+        const rawClasses = row[4];
 
         if (rawNip && rawName && rawSubject) {
           const cleanNip = String(rawNip).trim();
           const cleanName = String(rawName).trim();
           const cleanSubject = String(rawSubject).trim();
           const cleanPin = rawPin ? String(rawPin).trim() : "guru123";
+          const cleanClasses = rawClasses ? String(rawClasses).trim().toUpperCase() : "";
 
           const dupNip = this.teachers.find(t => String(t.nip).trim() === cleanNip && t.role !== 'admin');
           if (dupNip) {
             dupNip.name = cleanName;
             dupNip.subject = cleanSubject;
             dupNip.pin = cleanPin;
+            if (rawClasses !== undefined) dupNip.classes = cleanClasses;
             importedCount++;
           } else if (cleanNip !== 'admin' && cleanNip !== '198501012010011001') {
             this.teachers.push({
@@ -967,6 +1103,7 @@ class CBTAdmin {
               nip: cleanNip,
               name: cleanName,
               subject: cleanSubject,
+              classes: cleanClasses,
               role: "guru",
               pin: cleanPin
             });
@@ -1155,6 +1292,91 @@ class CBTAdmin {
       });
     }
     return { success: true };
+  }
+
+  // ===================== BACKUP & PULIHKAN SELURUH DATA SEKOLAH =====================
+  exportAllAppData() {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Hanya Proktor / Admin yang dapat mengekspor backup penuh!" };
+    }
+
+    const backup = {
+      version: "3.1",
+      exportedAt: new Date().toISOString(),
+      appName: "CBT SMP NEGERI 2 PACET",
+      data: {
+        cbt_teachers_list: this.teachers,
+        cbt_students_list: window.studentManager ? window.studentManager.getAllStudents() : [],
+        cbt_exam_schedules: this.schedules,
+        cbt_questions: window.examEngine ? window.examEngine.questions : [],
+        cbt_config: window.examEngine ? window.examEngine.config : {},
+        cbt_school_config: this.getSchoolConfig(),
+        cbt_supabase_config: window.supabaseSync ? window.supabaseSync.getConfig() : {},
+        cbt_exam_results: JSON.parse(localStorage.getItem('cbt_exam_results') || '[]')
+      }
+    };
+
+    const jsonStr = JSON.stringify(backup, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `Backup_Lengkap_CBT_SMPN2Pacet_${dateStamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { success: true };
+  }
+
+  importAllAppData(jsonString) {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Hanya Proktor / Admin yang dapat memulihkan backup penuh!" };
+    }
+
+    try {
+      const parsed = JSON.parse(jsonString);
+      const d = (parsed && parsed.data) ? parsed.data : parsed;
+      if (!d || typeof d !== 'object') {
+        return { success: false, message: "Format file backup tidak valid." };
+      }
+
+      if (Array.isArray(d.cbt_teachers_list) && d.cbt_teachers_list.length > 0) {
+        this.saveTeachers(d.cbt_teachers_list);
+      }
+      if (Array.isArray(d.cbt_students_list) && window.studentManager) {
+        window.studentManager.saveStudents(d.cbt_students_list);
+      }
+      if (Array.isArray(d.cbt_exam_schedules)) {
+        this.saveSchedules(d.cbt_exam_schedules);
+      }
+      if (Array.isArray(d.cbt_questions) && d.cbt_questions.length > 0 && window.examEngine) {
+        window.examEngine.saveQuestions(d.cbt_questions);
+      }
+      if (d.cbt_config && typeof d.cbt_config === 'object' && window.examEngine) {
+        window.examEngine.saveConfig(d.cbt_config);
+      }
+      if (d.cbt_school_config && typeof d.cbt_school_config === 'object') {
+        this.saveSchoolConfig(d.cbt_school_config);
+      }
+      if (d.cbt_supabase_config && typeof d.cbt_supabase_config === 'object' && window.supabaseSync) {
+        window.supabaseSync.saveConfig(d.cbt_supabase_config);
+      }
+      if (Array.isArray(d.cbt_exam_results)) {
+        localStorage.setItem('cbt_exam_results', JSON.stringify(d.cbt_exam_results));
+      }
+
+      return {
+        success: true,
+        teachersCount: this.teachers.length,
+        studentsCount: window.studentManager ? window.studentManager.getStudentCount() : 0,
+        schedulesCount: this.schedules.length,
+        questionsCount: window.examEngine ? window.examEngine.questions.length : 0
+      };
+    } catch (err) {
+      return { success: false, message: "Gagal membaca file backup: " + err.message };
+    }
   }
 }
 
