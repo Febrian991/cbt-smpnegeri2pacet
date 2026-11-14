@@ -7,6 +7,11 @@
 const DEFAULT_EXAM_CONFIG = {
   examTitle: "UJIAN SEKOLAH BERBASIS KOMPUTER (CBT)",
   subject: "Literasi, Numerasi & Pengetahuan Umum",
+  targetClass: "Semua Kelas",
+  scheduleDay: "",
+  scheduleDate: "",
+  scheduleTime: "",
+  activeScheduleId: "",
   durationMinutes: 80, // Alokasi waktu 80 menit
   examToken: "CBT80M",
   showScoreToStudent: false, // Nilai dirahasiakan dari siswa

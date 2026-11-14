@@ -101,6 +101,10 @@
           <h2 id="loginExamTitle" class="text-lg sm:text-xl font-bold text-slate-900 leading-snug">UJIAN SEKOLAH BERBASIS KOMPUTER (CBT)</h2>
           <p id="loginSchoolName" class="text-xs sm:text-sm font-extrabold text-blue-700 tracking-wide mt-1 uppercase">SMP NEGERI 2 PACET</p>
           <p id="loginExamSubtitle" class="text-xs sm:text-sm text-slate-500 mt-1">Literasi, Numerasi &amp; Pengetahuan Umum • Alokasi: 80 Menit</p>
+          <div id="loginScheduleBadge" class="hidden mt-2.5 inline-flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-[11px] font-bold text-indigo-800">
+            <span>📅</span>
+            <span id="loginScheduleText">-</span>
+          </div>
         </div>
 
         <form id="studentLoginForm" class="space-y-3.5 sm:space-y-4">
@@ -169,6 +173,10 @@
           <div class="flex justify-between">
             <span class="text-slate-500 font-medium">Mata Pelajaran:</span>
             <span id="confirmSubject" class="font-bold text-slate-800 text-right">-</span>
+          </div>
+          <div id="confirmScheduleRow" class="hidden flex justify-between">
+            <span class="text-slate-500 font-medium">Jadwal Ujian:</span>
+            <span id="confirmSchedule" class="font-bold text-indigo-700 text-right">-</span>
           </div>
           <div class="flex justify-between">
             <span class="text-slate-500 font-medium">Alokasi Waktu:</span>
@@ -433,10 +441,13 @@
         </div>
       </div>
 
-      <!-- Admin Tabs Navigation (5 Tabs) -->
+      <!-- Admin Tabs Navigation (6 Tabs) -->
       <div class="flex border-b border-slate-200 gap-2 overflow-x-auto pb-1 text-xs sm:text-sm">
         <button id="adminTabBtnResults" type="button" data-tab="tabResults" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border-2 border-blue-600 bg-blue-50 text-blue-600 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
           <span>📊 Rekap Nilai (Ranking)</span>
+        </button>
+        <button id="adminTabBtnSchedules" type="button" data-tab="tabSchedules" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border-2 border-transparent text-slate-600 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
+          <span>📅 Jadwal &amp; Aktifkan Mapel</span>
         </button>
         <button id="adminTabBtnQuestions" type="button" data-tab="tabQuestions" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border-2 border-transparent text-slate-600 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
           <span>📝 Bank Soal Ujian</span>
@@ -564,6 +575,112 @@
         </div>
       </div>
 
+      <!-- TAB BARU (KHUSUS ADMIN): JADWAL UJIAN & AKTIFKAN MAPEL -->
+      <div id="tabSchedules" class="admin-tab-pane hidden flex flex-col gap-4">
+        <div class="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900">Jadwal Ujian &amp; Aktivasi Mata Pelajaran</h3>
+            <p class="text-xs text-slate-500">Khusus Panel Admin: Atur hari, tanggal, mata pelajaran, &amp; kelas, lalu klik <strong>Aktifkan Mapel</strong> saat ujian berlangsung.</p>
+          </div>
+          <div id="activeScheduleBanner" class="px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span id="activeScheduleBannerText">Mapel Aktif: -</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          <!-- Form Tambah / Edit Jadwal -->
+          <div class="lg:col-span-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
+              <h4 id="scheduleFormTitle" class="font-bold text-sm text-slate-900">+ Tambah Jadwal Ujian</h4>
+              <button type="button" id="btnCancelEditSchedule" class="hidden text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer">Batal Edit</button>
+            </div>
+
+            <form id="formScheduleItem" class="space-y-3 text-xs">
+              <input type="hidden" id="editScheduleId">
+
+              <div class="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputDate">Tanggal Ujian</label>
+                  <input type="date" id="schInputDate" required class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputDay">Hari</label>
+                  <select id="schInputDay" class="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white font-semibold outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="Senin">Senin</option>
+                    <option value="Selasa">Selasa</option>
+                    <option value="Rabu">Rabu</option>
+                    <option value="Kamis">Kamis</option>
+                    <option value="Jumat">Jumat</option>
+                    <option value="Sabtu">Sabtu</option>
+                    <option value="Minggu">Minggu</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-700 mb-1" for="schInputSubject">Mata Pelajaran</label>
+                <input type="text" id="schInputSubject" list="scheduleSubjectList" required placeholder="Contoh: Matematika" class="w-full px-3 py-2 rounded-xl border border-slate-300 font-semibold outline-none focus:ring-2 focus:ring-blue-500">
+                <datalist id="scheduleSubjectList"></datalist>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputClass">Kelas / Tingkat</label>
+                  <input type="text" id="schInputClass" required placeholder="Contoh: Kelas 7" class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputTime">Jam Pelaksanaan</label>
+                  <input type="text" id="schInputTime" placeholder="07:30 - 08:50" value="07:30 - 08:50" class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputDuration">Durasi (Menit)</label>
+                  <input type="number" id="schInputDuration" min="1" max="300" value="80" required class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputToken">Token Ujian</label>
+                  <div class="flex gap-1">
+                    <input type="text" id="schInputToken" required placeholder="MTK7A" class="w-full px-2.5 py-2 rounded-xl border border-slate-300 font-bold uppercase text-blue-700 outline-none focus:ring-2 focus:ring-blue-500">
+                    <button type="button" id="btnSchRandomToken" class="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold cursor-pointer" title="Acak Token">🎲</button>
+                  </div>
+                </div>
+              </div>
+
+              <button type="submit" id="btnSubmitSchedule" class="w-full py-2.5 px-4 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition cursor-pointer">
+                💾 Simpan ke Daftar Jadwal
+              </button>
+            </form>
+          </div>
+
+          <!-- Tabel Daftar Jadwal Ujian -->
+          <div class="lg:col-span-8 bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
+            <div class="p-3.5 border-b border-slate-100 flex items-center justify-between gap-2">
+              <span class="font-bold text-xs sm:text-sm text-slate-800">Daftar Jadwal Mata Pelajaran</span>
+              <span class="text-[11px] text-slate-500">Klik <strong>Aktifkan Mapel</strong> untuk mengganti ujian aktif siswa</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase tracking-wider font-bold text-[11px]">
+                    <th class="p-3 text-center w-10">No</th>
+                    <th class="p-3">Hari &amp; Tanggal</th>
+                    <th class="p-3">Mata Pelajaran &amp; Kelas</th>
+                    <th class="p-3">Jam / Durasi</th>
+                    <th class="p-3 text-center">Token</th>
+                    <th class="p-3 text-center">Status &amp; Aktivasi</th>
+                    <th class="p-3 text-center w-20">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="adminSchedulesTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- TAB 2: BANK SOAL UJIAN -->
       <div id="tabQuestions" class="admin-tab-pane hidden flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200">
@@ -645,7 +762,8 @@
                   <th class="p-3 text-center w-10">No</th>
                   <th class="p-3">NISN</th>
                   <th class="p-3">Nama Lengkap Siswa</th>
-                  <th class="p-3">Tempat, Tgl Lahir</th>
+                  <th class="p-3">Tempat Lahir</th>
+                  <th class="p-3">Tanggal Lahir</th>
                   <th class="p-3">Jenis Kelamin</th>
                   <th class="p-3">Kelas</th>
                   <th class="p-3">Alamat</th>
@@ -1197,9 +1315,15 @@
           <input type="text" id="stuInputName" required placeholder="Nama Lengkap" class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
         </div>
 
-        <div>
-          <label class="block font-bold text-slate-700 mb-1" for="stuInputTtl">Tempat, Tanggal Lahir</label>
-          <input type="text" id="stuInputTtl" required placeholder="Mojokerto, 12 Januari 2011" class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-slate-700 mb-1" for="stuInputBirthPlace">Tempat Lahir</label>
+            <input type="text" id="stuInputBirthPlace" required placeholder="Mojokerto" class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block font-bold text-slate-700 mb-1" for="stuInputBirthDate">Tanggal Lahir</label>
+            <input type="text" id="stuInputBirthDate" required placeholder="12 Januari 2011" class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
         </div>
 
         <div class="grid grid-cols-2 gap-3">
@@ -1362,13 +1486,13 @@
   </div>
 
   <!-- ======================== SCRIPTS ======================== -->
-  <script src="js/default-questions.js?v=2.8"></script>
-  <script src="js/default-teachers.js?v=2.8"></script>
-  <script src="js/default-students.js?v=2.8"></script>
-  <script src="js/supabase-config.js?v=2.8"></script>
-  <script src="js/exam-engine.js?v=2.8"></script>
-  <script src="js/admin.js?v=2.8"></script>
-  <script src="js/app.js?v=2.8"></script>
+  <script src="js/default-questions.js?v=2.9"></script>
+  <script src="js/default-teachers.js?v=2.9"></script>
+  <script src="js/default-students.js?v=2.9"></script>
+  <script src="js/supabase-config.js?v=2.9"></script>
+  <script src="js/exam-engine.js?v=2.9"></script>
+  <script src="js/admin.js?v=2.9"></script>
+  <script src="js/app.js?v=2.9"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

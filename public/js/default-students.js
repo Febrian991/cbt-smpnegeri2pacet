@@ -1,24 +1,65 @@
 // Data Manajemen Siswa Peserta Ujian (Kapasitas 250+ Siswa)
-// Mendukung Impor Excel (.xlsx), Format Kartu Presisi 9,0 x 5,3 cm dengan Kop Surat, & Autentikasi NISN + Password
+// Mendukung Impor Excel (.xlsx) dengan Kolom Tempat Lahir & Tanggal Lahir Terpisah, Kartu Presisi 9,0 x 5,3 cm dengan Kop Surat, & Autentikasi NISN + Password
+
+function splitBirthPlaceDate(raw) {
+  const txt = String(raw || "").trim();
+  if (!txt) return { birthPlace: "Mojokerto", birthDate: "10 Mei 2011" };
+  const idx = txt.indexOf(',');
+  if (idx > -1) {
+    return {
+      birthPlace: txt.slice(0, idx).trim() || "Mojokerto",
+      birthDate: txt.slice(idx + 1).trim() || "10 Mei 2011"
+    };
+  }
+  return { birthPlace: txt, birthDate: "-" };
+}
+
+function buildBirthPlaceDate(birthPlace, birthDate, fallbackRaw = "") {
+  const p = String(birthPlace || "").trim();
+  const d = String(birthDate || "").trim();
+  if (p && d && d !== "-") return `${p}, ${d}`;
+  if (p) return p;
+  if (d) return d;
+  return String(fallbackRaw || "").trim() || "-";
+}
 
 const SAMPLE_INITIAL_STUDENTS = [
-  { nisn: "0081234501", name: "Ahmad Fauzan Pratama", class: "9A", birthPlaceDate: "Mojokerto, 12 Januari 2011", gender: "Laki-laki", address: "Ds. Pacet RT 02 RW 01, Kec. Pacet", password: "123" },
-  { nisn: "0081234502", name: "Aisyah Putri Maharani", class: "9A", birthPlaceDate: "Mojokerto, 24 Maret 2011", gender: "Perempuan", address: "Ds. Claket RT 01 RW 03, Kec. Pacet", password: "123" },
-  { nisn: "0081234503", name: "Bagus Setiawan", class: "9A", birthPlaceDate: "Mojokerto, 05 Juli 2011", gender: "Laki-laki", address: "Ds. Padusan RT 04 RW 02, Kec. Pacet", password: "123" },
-  { nisn: "0081234504", name: "Cantika Dewi Anggraini", class: "9A", birthPlaceDate: "Mojokerto, 18 Agustus 2011", gender: "Perempuan", address: "Ds. Cembor RT 03 RW 01, Kec. Pacet", password: "123" },
-  { nisn: "0081234505", name: "Dimas Arya Pangestu", class: "9A", birthPlaceDate: "Mojokerto, 09 Februari 2011", gender: "Laki-laki", address: "Ds. Kembangbelor RT 02 RW 02, Kec. Pacet", password: "123" },
-  { nisn: "0081234506", name: "Eka Nur Safitri", class: "9B", birthPlaceDate: "Mojokerto, 15 September 2011", gender: "Perempuan", address: "Ds. Nogosari RT 01 RW 01, Kec. Pacet", password: "123" },
-  { nisn: "0081234507", name: "Farhan Maulana", class: "9B", birthPlaceDate: "Mojokerto, 30 Mei 2011", gender: "Laki-laki", address: "Ds. Sajen RT 05 RW 02, Kec. Pacet", password: "123" },
-  { nisn: "0081234508", name: "Gita Permatasari", class: "9B", birthPlaceDate: "Mojokerto, 11 Oktober 2011", gender: "Perempuan", address: "Ds. Petak RT 02 RW 03, Kec. Pacet", password: "123" },
-  { nisn: "0081234509", name: "Hafizh Al-Rasyid", class: "9B", birthPlaceDate: "Mojokerto, 22 April 2011", gender: "Laki-laki", address: "Ds. Pacet Selatan RT 03 RW 04, Kec. Pacet", password: "123" },
-  { nisn: "0081234510", name: "Intan Berlian", class: "9C", birthPlaceDate: "Mojokerto, 03 Juni 2011", gender: "Perempuan", address: "Ds. Bendunganjati RT 01 RW 02, Kec. Pacet", password: "123" },
-  { nisn: "0081234511", name: "Joko Supriyanto", class: "9C", birthPlaceDate: "Mojokerto, 19 November 2010", gender: "Laki-laki", address: "Ds. Wotanmas Jedong RT 03 RW 01, Kec. Ngoro", password: "123" },
-  { nisn: "0081234512", name: "Khansa Nabila", class: "9C", birthPlaceDate: "Mojokerto, 28 Desember 2011", gender: "Perempuan", address: "Ds. Kesimantengah RT 02 RW 01, Kec. Pacet", password: "123" }
+  { nisn: "0081234501", name: "Ahmad Fauzan Pratama", class: "9A", birthPlace: "Mojokerto", birthDate: "12 Januari 2011", birthPlaceDate: "Mojokerto, 12 Januari 2011", gender: "Laki-laki", address: "Ds. Pacet RT 02 RW 01, Kec. Pacet", password: "123" },
+  { nisn: "0081234502", name: "Aisyah Putri Maharani", class: "9A", birthPlace: "Mojokerto", birthDate: "24 Maret 2011", birthPlaceDate: "Mojokerto, 24 Maret 2011", gender: "Perempuan", address: "Ds. Claket RT 01 RW 03, Kec. Pacet", password: "123" },
+  { nisn: "0081234503", name: "Bagus Setiawan", class: "9A", birthPlace: "Mojokerto", birthDate: "05 Juli 2011", birthPlaceDate: "Mojokerto, 05 Juli 2011", gender: "Laki-laki", address: "Ds. Padusan RT 04 RW 02, Kec. Pacet", password: "123" },
+  { nisn: "0081234504", name: "Cantika Dewi Anggraini", class: "9A", birthPlace: "Mojokerto", birthDate: "18 Agustus 2011", birthPlaceDate: "Mojokerto, 18 Agustus 2011", gender: "Perempuan", address: "Ds. Cembor RT 03 RW 01, Kec. Pacet", password: "123" },
+  { nisn: "0081234505", name: "Dimas Arya Pangestu", class: "9A", birthPlace: "Mojokerto", birthDate: "09 Februari 2011", birthPlaceDate: "Mojokerto, 09 Februari 2011", gender: "Laki-laki", address: "Ds. Kembangbelor RT 02 RW 02, Kec. Pacet", password: "123" },
+  { nisn: "0081234506", name: "Eka Nur Safitri", class: "9B", birthPlace: "Mojokerto", birthDate: "15 September 2011", birthPlaceDate: "Mojokerto, 15 September 2011", gender: "Perempuan", address: "Ds. Nogosari RT 01 RW 01, Kec. Pacet", password: "123" },
+  { nisn: "0081234507", name: "Farhan Maulana", class: "9B", birthPlace: "Mojokerto", birthDate: "30 Mei 2011", birthPlaceDate: "Mojokerto, 30 Mei 2011", gender: "Laki-laki", address: "Ds. Sajen RT 05 RW 02, Kec. Pacet", password: "123" },
+  { nisn: "0081234508", name: "Gita Permatasari", class: "9B", birthPlace: "Mojokerto", birthDate: "11 Oktober 2011", birthPlaceDate: "Mojokerto, 11 Oktober 2011", gender: "Perempuan", address: "Ds. Petak RT 02 RW 03, Kec. Pacet", password: "123" },
+  { nisn: "0081234509", name: "Hafizh Al-Rasyid", class: "9B", birthPlace: "Mojokerto", birthDate: "22 April 2011", birthPlaceDate: "Mojokerto, 22 April 2011", gender: "Laki-laki", address: "Ds. Pacet Selatan RT 03 RW 04, Kec. Pacet", password: "123" },
+  { nisn: "0081234510", name: "Intan Berlian", class: "9C", birthPlace: "Mojokerto", birthDate: "03 Juni 2011", birthPlaceDate: "Mojokerto, 03 Juni 2011", gender: "Perempuan", address: "Ds. Bendunganjati RT 01 RW 02, Kec. Pacet", password: "123" },
+  { nisn: "0081234511", name: "Joko Supriyanto", class: "9C", birthPlace: "Mojokerto", birthDate: "19 November 2010", birthPlaceDate: "Mojokerto, 19 November 2010", gender: "Laki-laki", address: "Ds. Wotanmas Jedong RT 03 RW 01, Kec. Ngoro", password: "123" },
+  { nisn: "0081234512", name: "Khansa Nabila", class: "9C", birthPlace: "Mojokerto", birthDate: "28 Desember 2011", birthPlaceDate: "Mojokerto, 28 Desember 2011", gender: "Perempuan", address: "Ds. Kesimantengah RT 02 RW 01, Kec. Pacet", password: "123" }
 ];
 
 class StudentManager {
   constructor() {
     this.students = this.loadStudents();
+  }
+
+  normalizeStudent(s, idx = 0) {
+    const split = splitBirthPlaceDate(s.birthPlaceDate);
+    const birthPlace = s.birthPlace ? String(s.birthPlace).trim() : split.birthPlace;
+    const birthDate = s.birthDate ? String(s.birthDate).trim() : split.birthDate;
+    const birthPlaceDate = buildBirthPlaceDate(birthPlace, birthDate, s.birthPlaceDate);
+
+    return {
+      nisn: String(s.nisn || '').trim(),
+      name: String(s.name || '').trim(),
+      class: String(s.class || '9A').trim(),
+      birthPlace,
+      birthDate,
+      birthPlaceDate,
+      gender: s.gender || (idx % 2 === 0 ? "Laki-laki" : "Perempuan"),
+      address: s.address || "Ds. Pacet, Kec. Pacet, Mojokerto",
+      password: s.password ? String(s.password).trim() : "123"
+    };
   }
 
   loadStudents() {
@@ -27,15 +68,7 @@ class StudentManager {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((s, idx) => ({
-            nisn: String(s.nisn || '').trim(),
-            name: String(s.name || '').trim(),
-            class: String(s.class || '9A').trim(),
-            birthPlaceDate: s.birthPlaceDate || "Mojokerto, 10 Mei 2011",
-            gender: s.gender || (idx % 2 === 0 ? "Laki-laki" : "Perempuan"),
-            address: s.address || "Ds. Pacet, Kec. Pacet, Mojokerto",
-            password: s.password ? String(s.password).trim() : "123"
-          }));
+          return parsed.map((s, idx) => this.normalizeStudent(s, idx));
         }
       } catch (e) {
         console.error("Gagal load students:", e);
@@ -46,7 +79,7 @@ class StudentManager {
   }
 
   saveStudents(studentsList) {
-    this.students = studentsList;
+    this.students = studentsList.map((s, idx) => this.normalizeStudent(s, idx));
     localStorage.setItem('cbt_students_list', JSON.stringify(this.students));
   }
 
@@ -97,11 +130,16 @@ class StudentManager {
       return { success: false, message: `Siswa dengan NISN ${cleanNisn} sudah terdaftar!` };
     }
 
+    const birthPlace = studentData.birthPlace ? String(studentData.birthPlace).trim() : splitBirthPlaceDate(studentData.birthPlaceDate).birthPlace;
+    const birthDate = studentData.birthDate ? String(studentData.birthDate).trim() : splitBirthPlaceDate(studentData.birthPlaceDate).birthDate;
+
     this.students.push({
       nisn: cleanNisn,
       name: String(studentData.name || "").trim(),
       class: studentData.class ? String(studentData.class).trim() : "9A",
-      birthPlaceDate: studentData.birthPlaceDate ? String(studentData.birthPlaceDate).trim() : "Mojokerto, 15 Januari 2011",
+      birthPlace,
+      birthDate,
+      birthPlaceDate: buildBirthPlaceDate(birthPlace, birthDate),
       gender: studentData.gender ? String(studentData.gender).trim() : "Laki-laki",
       address: studentData.address ? String(studentData.address).trim() : "Ds. Pacet, Kec. Pacet",
       password: studentData.password ? String(studentData.password).trim() : "123"
@@ -128,11 +166,15 @@ class StudentManager {
   updateStudentProfile(nisn, updatedData) {
     this.students = this.students.map(s => {
       if (String(s.nisn).trim() === String(nisn).trim()) {
+        const nextPlace = updatedData.birthPlace !== undefined ? String(updatedData.birthPlace).trim() : s.birthPlace;
+        const nextDate = updatedData.birthDate !== undefined ? String(updatedData.birthDate).trim() : s.birthDate;
         return {
           ...s,
           name: updatedData.name ? String(updatedData.name).trim() : s.name,
           class: updatedData.class ? String(updatedData.class).trim() : s.class,
-          birthPlaceDate: updatedData.birthPlaceDate ? String(updatedData.birthPlaceDate).trim() : s.birthPlaceDate,
+          birthPlace: nextPlace,
+          birthDate: nextDate,
+          birthPlaceDate: buildBirthPlaceDate(nextPlace, nextDate, updatedData.birthPlaceDate || s.birthPlaceDate),
           gender: updatedData.gender ? String(updatedData.gender).trim() : s.gender,
           address: updatedData.address ? String(updatedData.address).trim() : s.address,
           password: updatedData.password ? String(updatedData.password).trim() : s.password
@@ -156,12 +198,14 @@ class StudentManager {
       (s.name && s.name.toLowerCase().includes(q)) ||
       (s.nisn && s.nisn.toLowerCase().includes(q)) ||
       (s.class && s.class.toLowerCase().includes(q)) ||
+      (s.birthPlace && s.birthPlace.toLowerCase().includes(q)) ||
+      (s.birthDate && s.birthDate.toLowerCase().includes(q)) ||
       (s.address && s.address.toLowerCase().includes(q))
     );
   }
 
   generate250DemoStudents() {
-    const classes = ["9A", "9B", "9C", "9D", "9E", "9F", "9G", "9H"];
+    const classes = ["7A", "7B", "7C", "8A", "8B", "8C", "9A", "9B", "9C"];
     const maleFirstNames = ["Ahmad", "Budi", "Bagus", "Dimas", "Eko", "Farhan", "Hafizh", "Joko", "Muhammad", "Rian", "Wahyu", "Yusuf", "Fajar", "Aditya", "Rizky", "Bambang", "Danu"];
     const femaleFirstNames = ["Aisyah", "Cantika", "Dewi", "Eka", "Gita", "Intan", "Khansa", "Lestari", "Nurul", "Putri", "Siti", "Tri", "Zahra", "Nabila", "Dini", "Rina", "Anisa"];
     const lastNames = ["Pratama", "Saputra", "Wijaya", "Kusuma", "Santoso", "Hidayat", "Lestari", "Rahmawati", "Firmansyah", "Nugroho", "Wulandari", "Maulana", "Setiawan", "Utami", "Pangestu", "Kurniawan", "Suharto"];
@@ -192,19 +236,22 @@ class StudentManager {
       const lName = lastNames[Math.floor(Math.random() * lastNames.length)];
       const assignedClass = classes[Math.floor((i - 1) / (250 / classes.length)) % classes.length];
 
-      const birthDay = (i % 28) + 1;
+      const birthDay = String((i % 28) + 1).padStart(2, '0');
       const birthMonth = months[(i % 12)];
-      const birthYear = 2011;
-      const birthPlaceDate = `Mojokerto, ${birthDay} ${birthMonth} ${birthYear}`;
+      const birthYear = assignedClass.startsWith('7') ? 2013 : assignedClass.startsWith('8') ? 2012 : 2011;
+      const birthPlace = "Mojokerto";
+      const birthDate = `${birthDay} ${birthMonth} ${birthYear}`;
       const address = villages[(i % villages.length)];
 
       generated.push({
         nisn: `0081234${padNum}`,
         name: `${fName} ${lName} (${padNum})`,
         class: assignedClass,
-        birthPlaceDate: birthPlaceDate,
-        gender: gender,
-        address: address,
+        birthPlace,
+        birthDate,
+        birthPlaceDate: `${birthPlace}, ${birthDate}`,
+        gender,
+        address,
         password: "123"
       });
     }
@@ -221,21 +268,22 @@ class StudentManager {
 
     const headers = [
       ["TEMPLATE PANGKALAN DATA PESERTA UJIAN SEKOLAH (CBT) - SMP NEGERI 2 PACET"],
-      ["Petunjuk: Jangan ubah baris judul kolom di baris ke-3. Isi data siswa mulai baris ke-4. Semua kolom wajib diisi."],
+      ["Petunjuk: Jangan ubah baris judul kolom di baris ke-3. Kolom Tempat Lahir & Tanggal Lahir terpisah. Isi data siswa mulai baris ke-4."],
       [
         "NISN (Wajib)",
         "Nama Lengkap Siswa (Wajib)",
         "Kelas / Rombel (Wajib)",
-        "Tempat Tanggal Lahir (Wajib)",
+        "Tempat Lahir (Wajib)",
+        "Tanggal Lahir (Wajib)",
         "Jenis Kelamin (Laki-laki / Perempuan)",
         "Alamat Lengkap Siswa (Wajib)",
         "Password Login Siswa (Bawaan: 123)"
       ],
-      ["0081234501", "Ahmad Fauzan Pratama", "9A", "Mojokerto, 12 Januari 2011", "Laki-laki", "Ds. Pacet RT 02 RW 01, Kec. Pacet", "123"],
-      ["0081234502", "Aisyah Putri Maharani", "9A", "Mojokerto, 24 Maret 2011", "Perempuan", "Ds. Claket RT 01 RW 03, Kec. Pacet", "123"],
-      ["0081234503", "Bagus Setiawan", "9B", "Mojokerto, 05 Juli 2011", "Laki-laki", "Ds. Padusan RT 04 RW 02, Kec. Pacet", "123"],
-      ["0081234504", "Cantika Dewi Anggraini", "9B", "Mojokerto, 18 Agustus 2011", "Perempuan", "Ds. Cembor RT 03 RW 01, Kec. Pacet", "123"],
-      ["0081234505", "Dimas Arya Pangestu", "9C", "Mojokerto, 09 Februari 2011", "Laki-laki", "Ds. Kembangbelor RT 02 RW 02, Kec. Pacet", "123"]
+      ["0081234501", "Ahmad Fauzan Pratama", "9A", "Mojokerto", "12 Januari 2011", "Laki-laki", "Ds. Pacet RT 02 RW 01, Kec. Pacet", "123"],
+      ["0081234502", "Aisyah Putri Maharani", "9A", "Mojokerto", "24 Maret 2011", "Perempuan", "Ds. Claket RT 01 RW 03, Kec. Pacet", "123"],
+      ["0081234503", "Bagus Setiawan", "8A", "Mojokerto", "05 Juli 2012", "Laki-laki", "Ds. Padusan RT 04 RW 02, Kec. Pacet", "123"],
+      ["0081234504", "Cantika Dewi Anggraini", "8B", "Mojokerto", "18 Agustus 2012", "Perempuan", "Ds. Cembor RT 03 RW 01, Kec. Pacet", "123"],
+      ["0081234505", "Dimas Arya Pangestu", "7A", "Mojokerto", "09 Februari 2013", "Laki-laki", "Ds. Kembangbelor RT 02 RW 02, Kec. Pacet", "123"]
     ];
 
     const wb = XLSX.utils.book_new();
@@ -243,11 +291,12 @@ class StudentManager {
 
     ws['!cols'] = [
       { wch: 18 },
-      { wch: 30 },
+      { wch: 28 },
       { wch: 14 },
-      { wch: 30 },
       { wch: 18 },
-      { wch: 38 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 36 },
       { wch: 18 }
     ];
 
@@ -266,7 +315,7 @@ class StudentManager {
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
 
-      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
 
       if (!rows || rows.length < 3) {
         return { success: false, message: "File Excel kosong atau format tidak sesuai." };
@@ -285,6 +334,12 @@ class StudentManager {
         return { success: false, message: "Kolom 'NISN' tidak ditemukan pada file Excel!" };
       }
 
+      const headerRow = (rows[headerRowIndex] || []).map(c => String(c || '').toLowerCase());
+      const hasSplitColumns =
+        headerRow.some(h => h.includes('tempat lahir')) ||
+        headerRow.some(h => h.includes('tanggal lahir')) ||
+        headerRow.length >= 8;
+
       const importedStudents = [];
       const dataRows = rows.slice(headerRowIndex + 1);
 
@@ -293,22 +348,39 @@ class StudentManager {
         const rawNisn = row[0];
         const rawName = row[1];
         const rawClass = row[2];
-        const rawTtl = row[3];
-        const rawJk = row[4];
-        const rawAddress = row[5];
-        const rawPass = row[6];
 
-        if (rawNisn && rawName) {
-          importedStudents.push({
-            nisn: String(rawNisn).trim(),
-            name: String(rawName).trim(),
-            class: rawClass ? String(rawClass).trim() : "9A",
-            birthPlaceDate: rawTtl ? String(rawTtl).trim() : "Mojokerto, 15 Januari 2011",
-            gender: rawJk ? String(rawJk).trim() : "Laki-laki",
-            address: rawAddress ? String(rawAddress).trim() : "Ds. Pacet, Kec. Pacet",
-            password: rawPass ? String(rawPass).trim() : "123"
-          });
+        if (!rawNisn || !rawName) return;
+
+        let birthPlace = "Mojokerto";
+        let birthDate = "15 Januari 2011";
+        let rawJk, rawAddress, rawPass;
+
+        if (hasSplitColumns) {
+          birthPlace = row[3] ? String(row[3]).trim() : "Mojokerto";
+          birthDate = row[4] ? String(row[4]).trim() : "15 Januari 2011";
+          rawJk = row[5];
+          rawAddress = row[6];
+          rawPass = row[7];
+        } else {
+          const parsedTtl = splitBirthPlaceDate(row[3]);
+          birthPlace = parsedTtl.birthPlace;
+          birthDate = parsedTtl.birthDate;
+          rawJk = row[4];
+          rawAddress = row[5];
+          rawPass = row[6];
         }
+
+        importedStudents.push({
+          nisn: String(rawNisn).trim(),
+          name: String(rawName).trim(),
+          class: rawClass ? String(rawClass).trim() : "9A",
+          birthPlace,
+          birthDate,
+          birthPlaceDate: buildBirthPlaceDate(birthPlace, birthDate),
+          gender: rawJk ? String(rawJk).trim() : "Laki-laki",
+          address: rawAddress ? String(rawAddress).trim() : "Ds. Pacet, Kec. Pacet",
+          password: rawPass ? String(rawPass).trim() : "123"
+        });
       });
 
       if (importedStudents.length === 0) {
@@ -370,7 +442,9 @@ class StudentManager {
       ? `<img src="${cfg.logoRight}" alt="Logo Kanan" style="width:26px; height:26px; object-fit:contain; flex-shrink:0;">`
       : `<div style="width:24px; height:24px; border-radius:50%; background:#059669; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:8px; flex-shrink:0;">SMP</div>`;
 
-    return list.map((s, idx) => `
+    return list.map((s, idx) => {
+      const ttlDisplay = buildBirthPlaceDate(s.birthPlace, s.birthDate, s.birthPlaceDate);
+      return `
       <div class="exam-card-9x5" style="width:9.0cm; height:5.3cm; max-width:9.0cm; max-height:5.3cm; border:1.8px solid #0f172a; border-radius:8px; padding:6px 8px; background:#ffffff; box-sizing:border-box; display:flex; flex-direction:column; justify-content:space-between; font-family:'Plus Jakarta Sans', Arial, sans-serif; overflow:hidden; position:relative; page-break-inside:avoid; break-inside:avoid;">
         
         <!-- KOP SURAT KARTU UJIAN -->
@@ -402,7 +476,7 @@ class StudentManager {
               <tr>
                 <td style="color:#475569; font-weight:600; padding:0.5px 0; white-space:nowrap;">TTL</td>
                 <td style="font-weight:700; padding:0.5px 0;">:</td>
-                <td style="color:#1e293b; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:125px; padding:0.5px 0;">${s.birthPlaceDate || '-'}</td>
+                <td style="color:#1e293b; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:125px; padding:0.5px 0;">${ttlDisplay}</td>
               </tr>
               <tr>
                 <td style="color:#475569; font-weight:600; padding:0.5px 0; white-space:nowrap;">Jenis Kelamin</td>
@@ -451,7 +525,8 @@ class StudentManager {
         </div>
 
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
 
   printExamCards(studentsToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {

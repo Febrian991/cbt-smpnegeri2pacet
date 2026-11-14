@@ -302,17 +302,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const tokenHintEl = document.getElementById('loginTokenHint');
     const headerSchoolEl = document.getElementById('headerSchoolName');
     const loginSchoolEl = document.getElementById('loginSchoolName');
+    const scheduleBadgeEl = document.getElementById('loginScheduleBadge');
+    const scheduleTextEl = document.getElementById('loginScheduleText');
 
     const schoolCfg = window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : { schoolName: 'SMP NEGERI 2 PACET' };
     if (headerSchoolEl) headerSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
     if (loginSchoolEl) loginSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
 
-    if (titleEl) titleEl.innerText = window.examEngine.config.examTitle;
-    if (subtitleEl) subtitleEl.innerText = `${window.examEngine.config.subject} • Alokasi Waktu: ${window.examEngine.config.durationMinutes} Menit`;
+    const cfg = window.examEngine.config;
+    const classPart = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
+
+    if (titleEl) titleEl.innerText = cfg.examTitle;
+    if (subtitleEl) subtitleEl.innerText = `${cfg.subject}${classPart} • Alokasi Waktu: ${cfg.durationMinutes} Menit`;
+
+    if (scheduleBadgeEl && scheduleTextEl) {
+      if (cfg.scheduleDay || cfg.scheduleDate) {
+        const datePart = [cfg.scheduleDay, cfg.scheduleDate].filter(Boolean).join(', ');
+        const timePart = cfg.scheduleTime ? ` • Pukul ${cfg.scheduleTime}` : '';
+        scheduleTextEl.innerText = `Jadwal Aktif: ${datePart}${timePart}`;
+        scheduleBadgeEl.classList.remove('hidden');
+      } else {
+        scheduleBadgeEl.classList.add('hidden');
+      }
+    }
+
     if (tokenHintEl) {
       const span = tokenHintEl.querySelector('span');
-      if (span) span.innerText = `Token Ujian Aktif: ${window.examEngine.config.examToken}`;
-      else tokenHintEl.innerText = `Token Ujian Aktif: ${window.examEngine.config.examToken}`;
+      if (span) span.innerText = `Token Ujian Aktif: ${cfg.examToken}`;
+      else tokenHintEl.innerText = `Token Ujian Aktif: ${cfg.examToken}`;
     }
   }
 
@@ -364,12 +381,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function populateConfirmView(student) {
     if (!student) return;
+    const cfg = window.examEngine.config;
+    const classPart = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
+
     document.getElementById('confirmName').innerText = student.name;
     document.getElementById('confirmNisn').innerText = student.nisn;
     document.getElementById('confirmClass').innerText = `Kelas ${student.class}`;
-    document.getElementById('confirmSubject').innerText = window.examEngine.config.subject;
-    document.getElementById('confirmDuration').innerText = `${window.examEngine.config.durationMinutes} Menit`;
+    document.getElementById('confirmSubject').innerText = `${cfg.subject}${classPart}`;
+    document.getElementById('confirmDuration').innerText = `${cfg.durationMinutes} Menit`;
     document.getElementById('confirmQuestionsCount').innerText = `${window.examEngine.questions.length} Butir Soal`;
+
+    const confirmScheduleRow = document.getElementById('confirmScheduleRow');
+    const confirmScheduleEl = document.getElementById('confirmSchedule');
+    if (confirmScheduleRow && confirmScheduleEl) {
+      if (cfg.scheduleDay || cfg.scheduleDate) {
+        const datePart = [cfg.scheduleDay, cfg.scheduleDate].filter(Boolean).join(', ');
+        const timePart = cfg.scheduleTime ? ` (${cfg.scheduleTime})` : '';
+        confirmScheduleEl.innerText = `${datePart}${timePart}`;
+        confirmScheduleRow.classList.remove('hidden');
+      } else {
+        confirmScheduleRow.classList.add('hidden');
+      }
+    }
   }
 
   // ===================== LOGIN SISWA =====================
@@ -892,14 +925,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ===================== 5 ADMIN TABS SWITCHER & RBAC =====================
+  // ===================== 6 ADMIN TABS SWITCHER & RBAC =====================
   const adminTabButtons = document.querySelectorAll('.admin-tab-btn');
 
   function switchAdminTab(targetTab) {
     const currentTeacher = window.cbtAdmin ? window.cbtAdmin.getCurrentTeacher() : null;
     const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
 
-    if (!isAdmin && (targetTab === 'tabStudents' || targetTab === 'tabTeachers' || targetTab === 'tabSettings')) {
+    if (!isAdmin && (targetTab === 'tabSchedules' || targetTab === 'tabStudents' || targetTab === 'tabTeachers' || targetTab === 'tabSettings')) {
       targetTab = 'tabResults';
     }
 
@@ -925,6 +958,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       if (targetTab === 'tabResults') {
         renderAdminAnalyticsAndResults();
+      } else if (targetTab === 'tabSchedules' && isAdmin) {
+        renderAdminSchedulesList();
       } else if (targetTab === 'tabQuestions') {
         renderAdminQuestionList();
       } else if (targetTab === 'tabStudents' && isAdmin) {
@@ -950,10 +985,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAdminDashboard() {
     const currentTeacher = window.cbtAdmin ? window.cbtAdmin.getCurrentTeacher() : null;
+    const tabSchedulesBtn = document.getElementById('adminTabBtnSchedules');
     const tabStudentsBtn = document.getElementById('adminTabBtnStudents');
     const tabTeachersBtn = document.getElementById('adminTabBtnTeachers');
     const tabSettingsBtn = document.getElementById('adminTabBtnSettings');
 
+    const tabSchedulesPane = document.getElementById('tabSchedules');
     const tabStudentsPane = document.getElementById('tabStudents');
     const tabTeachersPane = document.getElementById('tabTeachers');
     const tabSettingsPane = document.getElementById('tabSettings');
@@ -978,14 +1015,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!isAdmin) {
+        if (tabSchedulesBtn) tabSchedulesBtn.classList.add('hidden');
         if (tabStudentsBtn) tabStudentsBtn.classList.add('hidden');
         if (tabTeachersBtn) tabTeachersBtn.classList.add('hidden');
         if (tabSettingsBtn) tabSettingsBtn.classList.add('hidden');
+        if (tabSchedulesPane) tabSchedulesPane.classList.add('hidden');
         if (tabStudentsPane) tabStudentsPane.classList.add('hidden');
         if (tabTeachersPane) tabTeachersPane.classList.add('hidden');
         if (tabSettingsPane) tabSettingsPane.classList.add('hidden');
         switchAdminTab('tabResults');
       } else {
+        if (tabSchedulesBtn) tabSchedulesBtn.classList.remove('hidden');
         if (tabStudentsBtn) tabStudentsBtn.classList.remove('hidden');
         if (tabTeachersBtn) tabTeachersBtn.classList.remove('hidden');
         if (tabSettingsBtn) tabSettingsBtn.classList.remove('hidden');
@@ -996,12 +1036,237 @@ document.addEventListener('DOMContentLoaded', () => {
     renderAdminQuestionList();
 
     if (isAdmin) {
+      renderAdminSchedulesList();
       renderAdminStudentsList();
       renderAdminTeachersList();
       renderAdminConfigForm();
       renderSchoolConfigForm();
       renderSupabaseConfigForm();
     }
+  }
+
+  // ===================== TAB KHUSUS ADMIN: JADWAL UJIAN & AKTIFKAN MAPEL =====================
+  const schInputDate = document.getElementById('schInputDate');
+  const schInputDay = document.getElementById('schInputDay');
+  const btnSchRandomToken = document.getElementById('btnSchRandomToken');
+  const btnCancelEditSchedule = document.getElementById('btnCancelEditSchedule');
+  const formScheduleItem = document.getElementById('formScheduleItem');
+
+  function syncDayFromScheduleDate() {
+    if (!schInputDate || !schInputDay || !window.cbtAdmin) return;
+    const dayName = window.cbtAdmin.getIndonesianDayName(schInputDate.value);
+    if (dayName) schInputDay.value = dayName;
+  }
+
+  if (schInputDate) {
+    if (!schInputDate.value) {
+      schInputDate.value = '2026-12-07';
+      syncDayFromScheduleDate();
+    }
+    schInputDate.addEventListener('change', syncDayFromScheduleDate);
+  }
+
+  if (btnSchRandomToken) {
+    btnSchRandomToken.addEventListener('click', () => {
+      const tokenEl = document.getElementById('schInputToken');
+      if (tokenEl && window.cbtAdmin) tokenEl.value = window.cbtAdmin.generateRandomToken();
+    });
+  }
+
+  function populateScheduleSubjectDatalist() {
+    const dl = document.getElementById('scheduleSubjectList');
+    if (!dl || !window.cbtAdmin) return;
+    const subjects = window.cbtAdmin.getAllSubjects();
+    dl.innerHTML = subjects.map(s => `<option value="${s}">`).join('');
+  }
+
+  function resetScheduleForm() {
+    if (!formScheduleItem) return;
+    formScheduleItem.reset();
+    const idEl = document.getElementById('editScheduleId');
+    const titleEl = document.getElementById('scheduleFormTitle');
+    const submitBtn = document.getElementById('btnSubmitSchedule');
+    if (idEl) idEl.value = '';
+    if (schInputDate) {
+      schInputDate.value = '2026-12-07';
+      syncDayFromScheduleDate();
+    }
+    const timeEl = document.getElementById('schInputTime');
+    const durEl = document.getElementById('schInputDuration');
+    if (timeEl) timeEl.value = '07:30 - 08:50';
+    if (durEl) durEl.value = '80';
+    if (titleEl) titleEl.innerText = '+ Tambah Jadwal Ujian';
+    if (submitBtn) submitBtn.innerText = '💾 Simpan ke Daftar Jadwal';
+    if (btnCancelEditSchedule) btnCancelEditSchedule.classList.add('hidden');
+  }
+
+  function openEditScheduleForm(sched) {
+    if (!sched) return;
+    document.getElementById('editScheduleId').value = sched.id || '';
+    document.getElementById('schInputDate').value = sched.dateIso || '2026-12-07';
+    document.getElementById('schInputDay').value = sched.day || 'Senin';
+    document.getElementById('schInputSubject').value = sched.subject || '';
+    document.getElementById('schInputClass').value = sched.classLevel || '';
+    document.getElementById('schInputTime').value = sched.timeRange || '07:30 - 08:50';
+    document.getElementById('schInputDuration').value = sched.durationMinutes || 80;
+    document.getElementById('schInputToken').value = sched.token || '';
+
+    const titleEl = document.getElementById('scheduleFormTitle');
+    const submitBtn = document.getElementById('btnSubmitSchedule');
+    if (titleEl) titleEl.innerText = '✏️ Edit Jadwal Ujian';
+    if (submitBtn) submitBtn.innerText = '💾 Simpan Perubahan Jadwal';
+    if (btnCancelEditSchedule) btnCancelEditSchedule.classList.remove('hidden');
+  }
+
+  if (btnCancelEditSchedule) {
+    btnCancelEditSchedule.addEventListener('click', resetScheduleForm);
+  }
+
+  if (formScheduleItem) {
+    formScheduleItem.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!window.cbtAdmin || !window.cbtAdmin.isSuperAdminUser()) {
+        alert("Akses ditolak! Pengaturan jadwal ujian hanya tersedia di Panel Admin.");
+        return;
+      }
+
+      const editId = document.getElementById('editScheduleId').value.trim();
+      const payload = {
+        dateIso: document.getElementById('schInputDate').value.trim(),
+        day: document.getElementById('schInputDay').value,
+        subject: document.getElementById('schInputSubject').value.trim(),
+        classLevel: document.getElementById('schInputClass').value.trim(),
+        timeRange: document.getElementById('schInputTime').value.trim(),
+        durationMinutes: parseInt(document.getElementById('schInputDuration').value, 10) || 80,
+        token: document.getElementById('schInputToken').value.trim().toUpperCase()
+      };
+
+      const res = editId
+        ? window.cbtAdmin.updateSchedule(editId, payload)
+        : window.cbtAdmin.addSchedule(payload);
+
+      if (res.success) {
+        resetScheduleForm();
+        renderAdminSchedulesList();
+        setupSubjectAndClassFilters();
+        renderConfigInfoOnLogin();
+        renderAdminConfigForm();
+      } else {
+        alert(res.message);
+      }
+    });
+  }
+
+  function renderAdminSchedulesList() {
+    if (!window.cbtAdmin || !window.cbtAdmin.isSuperAdminUser()) return;
+
+    const tbody = document.getElementById('adminSchedulesTbody');
+    const bannerTextEl = document.getElementById('activeScheduleBannerText');
+    const cfg = window.examEngine.config;
+
+    populateScheduleSubjectDatalist();
+
+    if (bannerTextEl) {
+      if (cfg.scheduleDay || cfg.scheduleDate) {
+        const classLabel = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
+        bannerTextEl.innerText = `Mapel Aktif: ${cfg.subject}${classLabel} • ${[cfg.scheduleDay, cfg.scheduleDate].filter(Boolean).join(', ')} • Token: ${cfg.examToken}`;
+      } else {
+        bannerTextEl.innerText = `Mapel Aktif: ${cfg.subject} (Mode Manual • Token: ${cfg.examToken})`;
+      }
+    }
+
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const schedules = window.cbtAdmin.getAllSchedules();
+    if (schedules.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400">Belum ada jadwal ujian. Tambahkan jadwal di formulir sebelah kiri.</td></tr>`;
+      return;
+    }
+
+    schedules.forEach((s, idx) => {
+      const isActive = cfg.activeScheduleId === s.id;
+      const tr = document.createElement('tr');
+      tr.className = `border-b border-slate-100 transition ${isActive ? 'bg-emerald-50/60' : 'hover:bg-slate-50'}`;
+      tr.innerHTML = `
+        <td class="p-3 text-center font-bold text-slate-400">${idx + 1}</td>
+        <td class="p-3 whitespace-nowrap">
+          <div class="font-bold text-slate-900">${s.day}, ${s.dateFormatted || window.cbtAdmin.formatIndonesianDate(s.dateIso)}</div>
+          <div class="text-[10px] font-mono text-slate-400">${s.dateIso}</div>
+        </td>
+        <td class="p-3">
+          <div class="font-bold text-slate-900">${s.subject}</div>
+          <span class="inline-block mt-0.5 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-[10px]">${s.classLevel}</span>
+        </td>
+        <td class="p-3 whitespace-nowrap text-slate-600">
+          <div class="font-semibold">${s.timeRange || '-'}</div>
+          <div class="text-[10px] text-slate-400">${s.durationMinutes} Menit</div>
+        </td>
+        <td class="p-3 text-center">
+          <span class="px-2 py-0.5 rounded-lg bg-slate-100 text-blue-700 font-mono font-black text-xs">${s.token}</span>
+        </td>
+        <td class="p-3 text-center whitespace-nowrap">
+          ${isActive
+            ? `<div class="flex flex-col items-center gap-1">
+                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-200">✓ Sedang Aktif</span>
+                <button type="button" class="btn-deactivate-schedule px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] cursor-pointer">Nonaktifkan</button>
+              </div>`
+            : `<button type="button" class="btn-activate-schedule px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs transition cursor-pointer">▶ Aktifkan Mapel</button>`
+          }
+        </td>
+        <td class="p-3 text-center whitespace-nowrap">
+          <button type="button" class="btn-edit-schedule text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-50 rounded text-xs cursor-pointer mr-1" title="Edit Jadwal">✏️</button>
+          <button type="button" class="btn-delete-schedule text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded text-xs cursor-pointer" title="Hapus Jadwal">🗑️</button>
+        </td>
+      `;
+
+      const activateBtn = tr.querySelector('.btn-activate-schedule');
+      if (activateBtn) {
+        activateBtn.addEventListener('click', () => {
+          const res = window.cbtAdmin.activateSchedule(s.id);
+          if (res.success) {
+            renderAdminSchedulesList();
+            renderConfigInfoOnLogin();
+            renderAdminConfigForm();
+            setupSubjectAndClassFilters();
+            alert(`Mapel "${s.subject}" (${s.classLevel}) untuk hari ${s.day}, ${s.dateFormatted} berhasil DIAKTIFKAN!\nToken Ujian Siswa: ${s.token}`);
+          } else {
+            alert(res.message);
+          }
+        });
+      }
+
+      const deactivateBtn = tr.querySelector('.btn-deactivate-schedule');
+      if (deactivateBtn) {
+        deactivateBtn.addEventListener('click', () => {
+          const res = window.cbtAdmin.deactivateSchedule();
+          if (res.success) {
+            renderAdminSchedulesList();
+            renderConfigInfoOnLogin();
+            renderAdminConfigForm();
+          } else {
+            alert(res.message);
+          }
+        });
+      }
+
+      tr.querySelector('.btn-edit-schedule').addEventListener('click', () => openEditScheduleForm(s));
+      tr.querySelector('.btn-delete-schedule').addEventListener('click', () => {
+        if (confirm(`Hapus jadwal "${s.subject} (${s.classLevel})" tanggal ${s.day}, ${s.dateFormatted}?`)) {
+          const res = window.cbtAdmin.deleteSchedule(s.id);
+          if (res.success) {
+            renderAdminSchedulesList();
+            renderConfigInfoOnLogin();
+            renderAdminConfigForm();
+            setupSubjectAndClassFilters();
+          } else {
+            alert(res.message);
+          }
+        }
+      });
+
+      tbody.appendChild(tr);
+    });
   }
 
   // ===================== FILTER MAPEL & KELAS =====================
@@ -1402,7 +1667,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     tbody.innerHTML = '';
     if (students.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">Tidak ada data siswa ditemukan.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="p-6 text-center text-slate-400">Tidak ada data siswa ditemukan.</td></tr>`;
       return;
     }
 
@@ -1413,7 +1678,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <td class="p-3 text-center text-slate-400 font-bold">${idx + 1}</td>
         <td class="p-3 font-mono font-bold text-blue-700">${s.nisn}</td>
         <td class="p-3 font-semibold text-slate-800">${s.name}</td>
-        <td class="p-3 text-slate-600">${s.birthPlaceDate || '-'}</td>
+        <td class="p-3 text-slate-600">${s.birthPlace || '-'}</td>
+        <td class="p-3 text-slate-600 whitespace-nowrap">${s.birthDate || '-'}</td>
         <td class="p-3 text-slate-600">${s.gender || '-'}</td>
         <td class="p-3"><span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold text-[11px]">Kelas ${s.class}</span></td>
         <td class="p-3 text-slate-600 max-w-[180px] truncate" title="${s.address || ''}">${s.address || '-'}</td>
@@ -1452,7 +1718,8 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('stuInputNisn').readOnly = true;
       document.getElementById('stuInputName').value = student.name || '';
       document.getElementById('stuInputClass').value = student.class || '9A';
-      document.getElementById('stuInputTtl').value = student.birthPlaceDate || '';
+      document.getElementById('stuInputBirthPlace').value = student.birthPlace || '';
+      document.getElementById('stuInputBirthDate').value = student.birthDate || '';
       document.getElementById('stuInputGender').value = student.gender || 'Laki-laki';
       document.getElementById('stuInputPassword').value = student.password || '123';
       document.getElementById('stuInputAddress').value = student.address || '';
@@ -1463,7 +1730,8 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('stuInputNisn').readOnly = false;
       document.getElementById('stuInputName').value = '';
       document.getElementById('stuInputClass').value = '9A';
-      document.getElementById('stuInputTtl').value = '';
+      document.getElementById('stuInputBirthPlace').value = '';
+      document.getElementById('stuInputBirthDate').value = '';
       document.getElementById('stuInputGender').value = 'Laki-laki';
       document.getElementById('stuInputPassword').value = '123';
       document.getElementById('stuInputAddress').value = '';
@@ -1483,7 +1751,8 @@ document.addEventListener('DOMContentLoaded', () => {
         nisn: document.getElementById('stuInputNisn').value.trim(),
         name: document.getElementById('stuInputName').value.trim(),
         class: document.getElementById('stuInputClass').value.trim(),
-        birthPlaceDate: document.getElementById('stuInputTtl').value.trim(),
+        birthPlace: document.getElementById('stuInputBirthPlace').value.trim(),
+        birthDate: document.getElementById('stuInputBirthDate').value.trim(),
         gender: document.getElementById('stuInputGender').value,
         password: document.getElementById('stuInputPassword').value.trim() || '123',
         address: document.getElementById('stuInputAddress').value.trim()

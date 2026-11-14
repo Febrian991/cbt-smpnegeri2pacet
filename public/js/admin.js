@@ -1,8 +1,45 @@
 // CBT Admin & Guru: Manajemen 13 Guru, 250 Siswa, Rekap Nilai Otomatis, & Ekspor Excel/PDF
 
+const DEFAULT_SCHEDULES = [
+  {
+    id: "sch_1",
+    day: "Senin",
+    dateIso: "2026-12-07",
+    dateFormatted: "7 Desember 2026",
+    subject: "Matematika",
+    classLevel: "Kelas 7",
+    timeRange: "07:30 - 08:50",
+    durationMinutes: 80,
+    token: "MTK7A"
+  },
+  {
+    id: "sch_2",
+    day: "Senin",
+    dateIso: "2026-12-07",
+    dateFormatted: "7 Desember 2026",
+    subject: "Bahasa Indonesia",
+    classLevel: "Kelas 8",
+    timeRange: "09:15 - 10:35",
+    durationMinutes: 80,
+    token: "BIN8A"
+  },
+  {
+    id: "sch_3",
+    day: "Selasa",
+    dateIso: "2026-12-08",
+    dateFormatted: "8 Desember 2026",
+    subject: "Ilmu Pengetahuan Alam (IPA)",
+    classLevel: "Kelas 9",
+    timeRange: "07:30 - 08:50",
+    durationMinutes: 80,
+    token: "IPA9A"
+  }
+];
+
 class CBTAdmin {
   constructor() {
     this.teachers = this.loadTeachers();
+    this.schedules = this.loadSchedules();
     this.currentTeacher = this.restoreSession();
     this.isAuthenticated = Boolean(this.currentTeacher);
     this.selectedSubjectFilter = 'ALL';
@@ -91,6 +128,12 @@ class CBTAdmin {
           parts.forEach(p => subjectsSet.add(p));
           subjectsSet.add(t.subject.trim());
         }
+      });
+    }
+
+    if (Array.isArray(this.schedules)) {
+      this.schedules.forEach(s => {
+        if (s.subject) subjectsSet.add(s.subject.trim());
       });
     }
 
@@ -939,6 +982,179 @@ class CBTAdmin {
       console.error("Gagal parse Excel guru:", err);
       return { success: false, message: "Format Excel tidak dapat dibaca: " + err.message };
     }
+  }
+
+  // ===================== JADWAL UJIAN & AKTIFKAN MAPEL (KHUSUS ADMIN) =====================
+  isSuperAdminUser() {
+    const cur = this.getCurrentTeacher();
+    return Boolean(cur && (cur.role === 'admin' || cur.id === 'admin'));
+  }
+
+  formatIndonesianDate(dateIso) {
+    if (!dateIso) return "";
+    const parts = String(dateIso).split('-');
+    if (parts.length !== 3) return dateIso;
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(d) || m < 0 || m > 11) return dateIso;
+    return `${d} ${months[m]} ${y}`;
+  }
+
+  getIndonesianDayName(dateIso) {
+    if (!dateIso) return "";
+    const parts = String(dateIso).split('-');
+    if (parts.length !== 3) return "";
+    const dt = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    if (isNaN(dt.getTime())) return "";
+    const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    return days[dt.getDay()];
+  }
+
+  loadSchedules() {
+    const saved = localStorage.getItem('cbt_exam_schedules');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        console.error("Gagal load schedules:", e);
+      }
+    }
+    localStorage.setItem('cbt_exam_schedules', JSON.stringify(DEFAULT_SCHEDULES));
+    return [...DEFAULT_SCHEDULES];
+  }
+
+  saveSchedules(list) {
+    this.schedules = list;
+    localStorage.setItem('cbt_exam_schedules', JSON.stringify(this.schedules));
+  }
+
+  getAllSchedules() {
+    return [...this.schedules].sort((a, b) => String(a.dateIso || '').localeCompare(String(b.dateIso || '')));
+  }
+
+  addSchedule({ day, dateIso, subject, classLevel, timeRange, durationMinutes, token }) {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Hanya Admin / Proktor yang dapat menambah jadwal ujian!" };
+    }
+    const cleanSubject = String(subject || "").trim();
+    const cleanDateIso = String(dateIso || "").trim();
+    const cleanDay = String(day || "").trim() || this.getIndonesianDayName(cleanDateIso) || "Senin";
+    const cleanClass = String(classLevel || "").trim() || "Semua Kelas";
+    const cleanTime = String(timeRange || "").trim() || "07:30 - 08:50";
+    const cleanDuration = parseInt(durationMinutes, 10) || 80;
+    const cleanToken = String(token || "").trim().toUpperCase() || this.generateRandomToken();
+
+    if (!cleanSubject || !cleanDateIso) {
+      return { success: false, message: "Tanggal Ujian dan Mata Pelajaran wajib diisi!" };
+    }
+
+    const newItem = {
+      id: 'sch_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      day: cleanDay,
+      dateIso: cleanDateIso,
+      dateFormatted: this.formatIndonesianDate(cleanDateIso),
+      subject: cleanSubject,
+      classLevel: cleanClass,
+      timeRange: cleanTime,
+      durationMinutes: cleanDuration,
+      token: cleanToken
+    };
+
+    this.schedules.push(newItem);
+    this.saveSchedules(this.schedules);
+    return { success: true, schedule: newItem };
+  }
+
+  updateSchedule(id, payload) {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Hanya Admin / Proktor yang dapat mengubah jadwal ujian!" };
+    }
+    let updatedItem = null;
+    this.schedules = this.schedules.map(s => {
+      if (s.id === id) {
+        const nextDateIso = payload.dateIso ? String(payload.dateIso).trim() : s.dateIso;
+        const nextDay = payload.day ? String(payload.day).trim() : (this.getIndonesianDayName(nextDateIso) || s.day);
+        updatedItem = {
+          ...s,
+          day: nextDay,
+          dateIso: nextDateIso,
+          dateFormatted: this.formatIndonesianDate(nextDateIso),
+          subject: payload.subject ? String(payload.subject).trim() : s.subject,
+          classLevel: payload.classLevel ? String(payload.classLevel).trim() : s.classLevel,
+          timeRange: payload.timeRange !== undefined ? String(payload.timeRange).trim() : s.timeRange,
+          durationMinutes: parseInt(payload.durationMinutes, 10) || s.durationMinutes || 80,
+          token: payload.token ? String(payload.token).trim().toUpperCase() : s.token
+        };
+        return updatedItem;
+      }
+      return s;
+    });
+
+    if (!updatedItem) return { success: false, message: "Jadwal tidak ditemukan!" };
+    this.saveSchedules(this.schedules);
+
+    if (window.examEngine && window.examEngine.config.activeScheduleId === id) {
+      this.activateSchedule(id);
+    }
+    return { success: true, schedule: updatedItem };
+  }
+
+  deleteSchedule(id) {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Hanya Admin / Proktor yang dapat menghapus jadwal ujian!" };
+    }
+    this.schedules = this.schedules.filter(s => s.id !== id);
+    this.saveSchedules(this.schedules);
+
+    if (window.examEngine && window.examEngine.config.activeScheduleId === id) {
+      this.deactivateSchedule();
+    }
+    return { success: true };
+  }
+
+  activateSchedule(id) {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Fitur Aktifkan Mapel hanya tersedia di Panel Proktor / Admin!" };
+    }
+    const sched = this.schedules.find(s => s.id === id);
+    if (!sched) {
+      return { success: false, message: "Jadwal ujian tidak ditemukan!" };
+    }
+
+    if (window.examEngine) {
+      window.examEngine.saveConfig({
+        subject: sched.subject,
+        targetClass: sched.classLevel || "Semua Kelas",
+        scheduleDay: sched.day,
+        scheduleDate: sched.dateFormatted || this.formatIndonesianDate(sched.dateIso),
+        scheduleTime: sched.timeRange || "",
+        durationMinutes: sched.durationMinutes || 80,
+        examToken: sched.token || window.examEngine.config.examToken,
+        activeScheduleId: sched.id,
+        showScoreToStudent: false
+      });
+    }
+    return { success: true, schedule: sched };
+  }
+
+  deactivateSchedule() {
+    if (!this.isSuperAdminUser()) {
+      return { success: false, message: "Hanya Admin / Proktor yang dapat menonaktifkan jadwal!" };
+    }
+    if (window.examEngine) {
+      window.examEngine.saveConfig({
+        activeScheduleId: "",
+        scheduleDay: "",
+        scheduleDate: "",
+        scheduleTime: "",
+        targetClass: "Semua Kelas",
+        showScoreToStudent: false
+      });
+    }
+    return { success: true };
   }
 }
 
