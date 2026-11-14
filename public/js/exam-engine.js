@@ -33,7 +33,7 @@ class ExamEngine {
         }
         parsed.showScoreToStudent = false;
         parsed.durationMinutes = parsed.durationMinutes || 80;
-        this.saveConfig(parsed);
+        this.saveConfig(parsed, true);
         return { ...DEFAULT_EXAM_CONFIG, ...parsed };
       } catch (e) {
         console.error("Gagal load config", e);
@@ -42,9 +42,12 @@ class ExamEngine {
     return { ...DEFAULT_EXAM_CONFIG };
   }
 
-  saveConfig(newConfig) {
+  saveConfig(newConfig, skipCloudPush = false) {
     this.config = { ...this.config, ...newConfig, showScoreToStudent: false };
     localStorage.setItem('cbt_config', JSON.stringify(this.config));
+    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+      window.supabaseSync.pushStateKey('cbt_config', this.config);
+    }
   }
 
   loadQuestions() {
@@ -61,9 +64,12 @@ class ExamEngine {
     return [...DEFAULT_QUESTIONS];
   }
 
-  saveQuestions(newQuestions) {
+  saveQuestions(newQuestions, skipCloudPush = false) {
     this.questions = newQuestions;
     localStorage.setItem('cbt_questions', JSON.stringify(this.questions));
+    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+      window.supabaseSync.pushStateKey('cbt_questions', this.questions);
+    }
   }
 
   matchesSubject(qSub, targetSub) {

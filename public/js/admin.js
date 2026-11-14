@@ -105,9 +105,12 @@ class CBTAdmin {
     return [...defaults];
   }
 
-  saveTeachers(teachersList) {
+  saveTeachers(teachersList, skipCloudPush = false) {
     this.teachers = teachersList;
     localStorage.setItem('cbt_teachers_list', JSON.stringify(this.teachers));
+    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+      window.supabaseSync.pushStateKey('cbt_teachers_list', this.teachers);
+    }
   }
 
   getAllTeachers() {
@@ -1004,9 +1007,12 @@ class CBTAdmin {
     };
   }
 
-  saveSchoolConfig(cfg) {
+  saveSchoolConfig(cfg, skipCloudPush = false) {
     try {
       localStorage.setItem('cbt_school_config', JSON.stringify(cfg));
+      if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+        window.supabaseSync.pushStateKey('cbt_school_config', cfg);
+      }
       return { success: true };
     } catch (e) {
       return { success: false, message: e.message };
@@ -1163,9 +1169,12 @@ class CBTAdmin {
     return [...DEFAULT_SCHEDULES];
   }
 
-  saveSchedules(list) {
+  saveSchedules(list, skipCloudPush = false) {
     this.schedules = list;
     localStorage.setItem('cbt_exam_schedules', JSON.stringify(this.schedules));
+    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+      window.supabaseSync.pushStateKey('cbt_exam_schedules', this.schedules);
+    }
   }
 
   getAllSchedules() {

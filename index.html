@@ -1004,7 +1004,7 @@
             </div>
 
             <p class="text-xs text-slate-600 leading-relaxed my-3 bg-emerald-50/70 p-3 rounded-2xl border border-emerald-200">
-              💡 <strong>100% Gratis &amp; Otomatis:</strong> Buat proyek gratis di <strong>supabase.com</strong>, jalankan <code>supabase-schema.sql</code> di SQL Editor, lalu masukkan Project URL dan Anon Key di bawah ini.
+              💡 <strong>Otomatis Lintas Perangkat:</strong> Database cloud sudah terhubung otomatis di semua perangkat (Laptop &amp; HP). Setiap kali Anda menyimpan pengaturan, jadwal, soal, data siswa/guru, perubahan otomatis terkirim ke seluruh HP siswa &amp; guru.
             </p>
 
             <form id="formSupabaseConfig" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs sm:text-sm items-end">
@@ -1018,12 +1018,15 @@
                 <input type="text" id="cfgSupabaseKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." class="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none mono-font text-xs">
               </div>
 
-              <div class="md:col-span-2 flex gap-2 pt-1">
-                <button type="button" id="btnTestSupabase" class="flex-1 py-2.5 px-3 rounded-xl font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
+              <div class="md:col-span-2 flex flex-wrap gap-2 pt-1">
+                <button type="button" id="btnTestSupabase" class="flex-1 min-w-[150px] py-2.5 px-3 rounded-xl font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
                   ⚡ Uji Koneksi Cloud
                 </button>
-                <button type="submit" class="flex-1 py-2.5 px-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition cursor-pointer">
-                  💾 Simpan Cloud
+                <button type="button" id="btnPushAllToCloud" class="flex-1 min-w-[180px] py-2.5 px-3 rounded-xl font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer">
+                  ☁️ Kirim Semua Data ke Cloud
+                </button>
+                <button type="submit" class="flex-1 min-w-[150px] py-2.5 px-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition cursor-pointer">
+                  💾 Simpan &amp; Sinkron Cloud
                 </button>
               </div>
             </form>
@@ -1548,13 +1551,13 @@
   </div>
 
   <!-- ======================== SCRIPTS ======================== -->
-  <script src="js/default-questions.js?v=3.3"></script>
-  <script src="js/default-teachers.js?v=3.3"></script>
-  <script src="js/default-students.js?v=3.3"></script>
-  <script src="js/supabase-config.js?v=3.3"></script>
-  <script src="js/exam-engine.js?v=3.3"></script>
-  <script src="js/admin.js?v=3.3"></script>
-  <script src="js/app.js?v=3.3"></script>
+  <script src="js/default-questions.js?v=3.4"></script>
+  <script src="js/default-teachers.js?v=3.4"></script>
+  <script src="js/default-students.js?v=3.4"></script>
+  <script src="js/supabase-config.js?v=3.4"></script>
+  <script src="js/exam-engine.js?v=3.4"></script>
+  <script src="js/admin.js?v=3.4"></script>
+  <script src="js/app.js?v=3.4"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

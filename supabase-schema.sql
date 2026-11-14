@@ -27,3 +27,15 @@ ALTER TABLE cbt_exam_results ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow public insert to exam results" ON cbt_exam_results FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow public select on exam results" ON cbt_exam_results FOR SELECT USING (true);
 CREATE POLICY "Allow public delete on exam results" ON cbt_exam_results FOR DELETE USING (true);
+
+-- Tabel sinkronisasi pengaturan ujian, jadwal, bank soal, data siswa & guru lintas perangkat
+CREATE TABLE IF NOT EXISTS cbt_school_state (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE cbt_school_state ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow public all on school state" ON cbt_school_state FOR ALL USING (true) WITH CHECK (true);
+

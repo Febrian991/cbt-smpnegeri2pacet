@@ -78,9 +78,12 @@ class StudentManager {
     return [...SAMPLE_INITIAL_STUDENTS];
   }
 
-  saveStudents(studentsList) {
+  saveStudents(studentsList, skipCloudPush = false) {
     this.students = studentsList.map((s, idx) => this.normalizeStudent(s, idx));
     localStorage.setItem('cbt_students_list', JSON.stringify(this.students));
+    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+      window.supabaseSync.pushStateKey('cbt_students_list', this.students);
+    }
   }
 
   getAllStudents() {

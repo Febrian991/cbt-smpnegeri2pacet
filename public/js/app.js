@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (savedTab) {
         switchAdminTab(savedTab);
       }
+      syncFromCloud(false, true);
       return;
     }
 
@@ -63,12 +64,81 @@ document.addEventListener('DOMContentLoaded', () => {
         tempStudent = JSON.parse(savedConfirm);
         populateConfirmView(tempStudent);
         showView('confirm');
+        syncFromCloud(false, false);
         return;
       }
     } catch (e) {}
 
     showView('login');
+    syncFromCloud(false, false);
   }
+
+  function applyCloudState(stateMap) {
+    if (!stateMap || typeof stateMap !== 'object') return false;
+    let changed = false;
+
+    if (stateMap.cbt_school_config && typeof stateMap.cbt_school_config === 'object' && window.cbtAdmin) {
+      window.cbtAdmin.saveSchoolConfig(stateMap.cbt_school_config, true);
+      changed = true;
+    }
+    if (Array.isArray(stateMap.cbt_teachers_list) && stateMap.cbt_teachers_list.length > 0 && window.cbtAdmin) {
+      window.cbtAdmin.saveTeachers(stateMap.cbt_teachers_list, true);
+      changed = true;
+    }
+    if (Array.isArray(stateMap.cbt_students_list) && stateMap.cbt_students_list.length > 0 && window.studentManager) {
+      window.studentManager.saveStudents(stateMap.cbt_students_list, true);
+      changed = true;
+    }
+    if (Array.isArray(stateMap.cbt_exam_schedules) && window.cbtAdmin) {
+      window.cbtAdmin.saveSchedules(stateMap.cbt_exam_schedules, true);
+      changed = true;
+    }
+    if (Array.isArray(stateMap.cbt_questions) && stateMap.cbt_questions.length > 0 && window.examEngine) {
+      window.examEngine.saveQuestions(stateMap.cbt_questions, true);
+      changed = true;
+    }
+    if (stateMap.cbt_config && typeof stateMap.cbt_config === 'object' && window.examEngine) {
+      window.examEngine.saveConfig(stateMap.cbt_config, true);
+      changed = true;
+    }
+    return changed;
+  }
+
+  let cloudSyncPromise = null;
+  async function syncFromCloud(force = false, seedIfEmpty = false) {
+    if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) return false;
+    if (cloudSyncPromise && !force) return cloudSyncPromise;
+
+    cloudSyncPromise = (async () => {
+      const res = await window.supabaseSync.pullAllSchoolState();
+      if (res && res.success && res.state) {
+        const hasCloudData = Object.keys(res.state).length > 0;
+        if (hasCloudData) {
+          applyCloudState(res.state);
+          renderConfigInfoOnLogin();
+          if (viewAdmin && !viewAdmin.classList.contains('hidden')) {
+            renderAdminDashboard();
+          }
+          return true;
+        } else if (seedIfEmpty && window.cbtAdmin && window.cbtAdmin.isSuperAdminUser()) {
+          await window.supabaseSync.pushAllSchoolState();
+        }
+      }
+      return false;
+    })();
+
+    try {
+      return await cloudSyncPromise;
+    } finally {
+      cloudSyncPromise = null;
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && viewLogin && !viewLogin.classList.contains('hidden')) {
+      syncFromCloud(true, false);
+    }
+  });
 
   // ===================== UPLOAD FILE GAMBAR SOAL =====================
   function setupImageUploader() {
@@ -409,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===================== LOGIN SISWA =====================
   const studentLoginForm = document.getElementById('studentLoginForm');
   if (studentLoginForm) {
-    studentLoginForm.addEventListener('submit', (e) => {
+    studentLoginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const nisn = document.getElementById('studentNisn').value.trim();
       const password = document.getElementById('studentPassword').value.trim();
@@ -418,6 +488,17 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!nisn || !password) {
         alert("Harap lengkapi semua kolom!");
         return;
+      }
+
+      if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+        const needsRefresh =
+          (token && token !== String(window.examEngine.config.examToken || '').toUpperCase()) ||
+          (window.studentManager && !window.studentManager.getStudentByNisn(nisn));
+        if (cloudSyncPromise) {
+          await cloudSyncPromise;
+        } else if (needsRefresh) {
+          await syncFromCloud(true, false);
+        }
       }
 
       if (nisn.toLowerCase() === 'admin' || nisn.toLowerCase().includes('proktor')) {
@@ -895,7 +976,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const adminLoginForm = document.getElementById('adminLoginForm');
   if (adminLoginForm) {
-    adminLoginForm.addEventListener('submit', (e) => {
+    adminLoginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const usernameInput = document.getElementById('adminUsernameInput');
       const pinInput = document.getElementById('adminPinInput');
@@ -907,7 +988,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      const loginRes = window.cbtAdmin.login(identifier, pin);
+      let loginRes = window.cbtAdmin.login(identifier, pin);
+      if ((!loginRes || !loginRes.success) && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+        await syncFromCloud(true, false);
+        loginRes = window.cbtAdmin.login(identifier, pin);
+      }
+
       if (loginRes && loginRes.success) {
         modalAdminPin.classList.add('hidden');
         if (usernameInput) usernameInput.value = '';
@@ -2601,13 +2687,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const formSupabaseConfig = document.getElementById('formSupabaseConfig');
   if (formSupabaseConfig) {
-    formSupabaseConfig.addEventListener('submit', (e) => {
+    formSupabaseConfig.addEventListener('submit', async (e) => {
       e.preventDefault();
       const url = document.getElementById('cfgSupabaseUrl').value.trim();
       const key = document.getElementById('cfgSupabaseKey').value.trim();
       window.supabaseSync.saveConfig(url, key);
       updateCloudBadge();
-      alert("Konfigurasi Cloud Supabase berhasil disimpan!");
+      const res = await window.supabaseSync.pushAllSchoolState();
+      if (res.success) {
+        alert("Konfigurasi Cloud disimpan & seluruh data sekolah (Token, Jadwal, Kop/Logo, Soal, Siswa, Guru) berhasil disinkronkan ke Cloud!");
+      } else {
+        alert("Konfigurasi Cloud Supabase berhasil disimpan! (Pastikan koneksi internet aktif untuk mengirim data ke Cloud).");
+      }
+    });
+  }
+
+  const btnPushAllToCloud = document.getElementById('btnPushAllToCloud');
+  if (btnPushAllToCloud) {
+    btnPushAllToCloud.addEventListener('click', async () => {
+      if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) {
+        alert("Supabase Cloud belum aktif. Simpan URL dan Anon Key terlebih dahulu.");
+        return;
+      }
+      btnPushAllToCloud.disabled = true;
+      btnPushAllToCloud.innerText = "Mengirim ke Cloud...";
+      const res = await window.supabaseSync.pushAllSchoolState();
+      btnPushAllToCloud.disabled = false;
+      btnPushAllToCloud.innerText = "☁️ Kirim Semua Data ke Cloud";
+      if (res.success) {
+        alert(`Sukses! ${res.count} kelompok data (Pengaturan/Token, Identitas/Logo, Jadwal, Bank Soal, Siswa, Guru) telah dikirim ke Cloud dan langsung terbaca di semua HP & Laptop.`);
+      } else {
+        alert("Gagal mengirim data ke Cloud: " + (res.message || "Periksa koneksi internet Anda."));
+      }
     });
   }
 
