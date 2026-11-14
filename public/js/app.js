@@ -53,7 +53,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (savedTab) {
         switchAdminTab(savedTab);
       }
-      syncFromCloud(false, true);
+      if (!window.cbtAdmin.isSuperAdminUser()) {
+        syncFromCloud(false);
+      }
       return;
     }
 
@@ -64,13 +66,13 @@ document.addEventListener('DOMContentLoaded', () => {
         tempStudent = JSON.parse(savedConfirm);
         populateConfirmView(tempStudent);
         showView('confirm');
-        syncFromCloud(false, false);
+        syncFromCloud(false);
         return;
       }
     } catch (e) {}
 
     showView('login');
-    syncFromCloud(false, false);
+    syncFromCloud(false);
   }
 
   function applyCloudState(stateMap) {
@@ -105,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let cloudSyncPromise = null;
-  async function syncFromCloud(force = false, seedIfEmpty = false) {
+  async function syncFromCloud(force = false) {
     if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) return false;
     if (cloudSyncPromise && !force) return cloudSyncPromise;
 
@@ -120,8 +122,6 @@ document.addEventListener('DOMContentLoaded', () => {
             renderAdminDashboard();
           }
           return true;
-        } else if (seedIfEmpty && window.cbtAdmin && window.cbtAdmin.isSuperAdminUser()) {
-          await window.supabaseSync.pushAllSchoolState();
         }
       }
       return false;
@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && viewLogin && !viewLogin.classList.contains('hidden')) {
-      syncFromCloud(true, false);
+      syncFromCloud(true);
     }
   });
 
@@ -2698,6 +2698,26 @@ document.addEventListener('DOMContentLoaded', () => {
         alert("Konfigurasi Cloud disimpan & seluruh data sekolah (Token, Jadwal, Kop/Logo, Soal, Siswa, Guru) berhasil disinkronkan ke Cloud!");
       } else {
         alert("Konfigurasi Cloud Supabase berhasil disimpan! (Pastikan koneksi internet aktif untuk mengirim data ke Cloud).");
+      }
+    });
+  }
+
+  const btnPullFromCloud = document.getElementById('btnPullFromCloud');
+  if (btnPullFromCloud) {
+    btnPullFromCloud.addEventListener('click', async () => {
+      if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) {
+        alert("Supabase Cloud belum aktif.");
+        return;
+      }
+      btnPullFromCloud.disabled = true;
+      btnPullFromCloud.innerText = "Mengambil dari Cloud...";
+      const pulled = await syncFromCloud(true);
+      btnPullFromCloud.disabled = false;
+      btnPullFromCloud.innerText = "⬇️ Ambil Data dari Cloud";
+      if (pulled) {
+        alert("Sukses! Data terbaru (Pengaturan/Token, Kop/Logo, Jadwal, Soal, Siswa, Guru) berhasil diambil dari Cloud ke perangkat ini.");
+      } else {
+        alert("Belum ada data tersimpan di Cloud atau koneksi gagal. Silakan klik '☁️ Kirim Semua Data ke Cloud' dari laptop utama Anda terlebih dahulu.");
       }
     });
   }
