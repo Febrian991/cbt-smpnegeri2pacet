@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentUploadedImageBase64 = "";
   let currentLogoLeftBase64 = "";
   let currentLogoRightBase64 = "";
+  let currentLogoCbtBase64 = "";
 
   function init() {
     renderConfigInfoOnLogin();
@@ -203,7 +204,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
 
-        const mime = preservePng && file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const isTransparentType = file.type === 'image/png' || file.type === 'image/webp' || file.type === 'image/svg+xml';
+        const mime = preservePng && isTransparentType ? 'image/png' : 'image/jpeg';
         callback(canvas.toDataURL(mime, quality));
       };
       img.src = event.target.result;
@@ -224,7 +226,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnRemove) btnRemove.classList.add('hidden');
   }
 
-  // ===================== UPLOAD LOGO KOP KIRI & KANAN =====================
+  // ===================== UPLOAD LOGO KOP KIRI, KANAN, & LOGO CBT =====================
+  function persistQuickCbtLogo(dataUrl) {
+    if (!window.cbtAdmin) return;
+    const cfg = window.cbtAdmin.getSchoolConfig();
+    cfg.logoCbt = dataUrl || "";
+    window.cbtAdmin.saveSchoolConfig(cfg);
+    applyCbtBrandLogo(cfg.logoCbt);
+  }
+
   function setupSchoolLogoUploaders() {
     const leftFile = document.getElementById('cfgLogoLeftFile');
     const btnUploadLeft = document.getElementById('btnUploadLogoLeft');
@@ -233,6 +243,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const rightFile = document.getElementById('cfgLogoRightFile');
     const btnUploadRight = document.getElementById('btnUploadLogoRight');
     const btnRemoveRight = document.getElementById('btnRemoveLogoRight');
+
+    const cbtFile = document.getElementById('cfgLogoCbtFile');
+    const btnUploadCbt = document.getElementById('btnUploadLogoCbt');
+    const btnRemoveCbt = document.getElementById('btnRemoveLogoCbt');
 
     if (btnUploadLeft && leftFile) {
       btnUploadLeft.addEventListener('click', () => leftFile.click());
@@ -273,20 +287,86 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLogoPreview('right', "");
       });
     }
+
+    if (btnUploadCbt && cbtFile) {
+      btnUploadCbt.addEventListener('click', () => cbtFile.click());
+      cbtFile.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file || !file.type.startsWith('image/')) return;
+        compressImageFile(file, 320, 0.9, true, (dataUrl) => {
+          currentLogoCbtBase64 = dataUrl;
+          renderLogoPreview('cbt', dataUrl);
+          persistQuickCbtLogo(dataUrl);
+        });
+      });
+    }
+
+    if (btnRemoveCbt) {
+      btnRemoveCbt.addEventListener('click', () => {
+        currentLogoCbtBase64 = "";
+        if (cbtFile) cbtFile.value = "";
+        renderLogoPreview('cbt', "");
+        persistQuickCbtLogo("");
+      });
+    }
   }
 
   function renderLogoPreview(side, dataUrl) {
-    const box = document.getElementById(side === 'left' ? 'previewLogoLeftBox' : 'previewLogoRightBox');
-    const removeBtn = document.getElementById(side === 'left' ? 'btnRemoveLogoLeft' : 'btnRemoveLogoRight');
+    const boxId = side === 'left'
+      ? 'previewLogoLeftBox'
+      : side === 'right'
+        ? 'previewLogoRightBox'
+        : 'previewLogoCbtBox';
+    const removeBtnId = side === 'left'
+      ? 'btnRemoveLogoLeft'
+      : side === 'right'
+        ? 'btnRemoveLogoRight'
+        : 'btnRemoveLogoCbt';
+
+    const box = document.getElementById(boxId);
+    const removeBtn = document.getElementById(removeBtnId);
     if (!box) return;
 
     if (dataUrl) {
       box.innerHTML = `<img src="${dataUrl}" alt="Logo ${side}" class="w-full h-full object-contain p-0.5">`;
       if (removeBtn) removeBtn.classList.remove('hidden');
     } else {
-      box.innerHTML = `<span class="text-[9px] font-bold text-slate-400">${side === 'left' ? 'DINAS' : 'SMP'}</span>`;
+      if (side === 'cbt') {
+        box.innerHTML = `<span class="text-[10px] font-black text-blue-700">CBT</span>`;
+      } else {
+        box.innerHTML = `<span class="text-[9px] font-bold text-slate-400">${side === 'left' ? 'DINAS' : 'SMP'}</span>`;
+      }
       if (removeBtn) removeBtn.classList.add('hidden');
     }
+  }
+
+  function applyCbtBrandLogo(logoUrl) {
+    const headerLogoEl = document.getElementById('headerLogoBox');
+    const loginLogoEl = document.getElementById('loginLogoBox');
+
+    if (headerLogoEl) {
+      if (logoUrl) {
+        headerLogoEl.className = "w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shadow-xs flex-shrink-0 overflow-hidden p-0.5";
+        headerLogoEl.innerHTML = `<img src="${logoUrl}" alt="Logo CBT" class="w-full h-full object-contain">`;
+      } else {
+        headerLogoEl.className = "w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white font-black text-base sm:text-lg shadow-md flex-shrink-0 overflow-hidden";
+        headerLogoEl.innerText = "CBT";
+      }
+    }
+
+    if (loginLogoEl) {
+      if (logoUrl) {
+        loginLogoEl.className = "inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 p-1.5 rounded-2xl bg-slate-50 border border-slate-200/80 shadow-xs mb-2.5 sm:mb-3 overflow-hidden";
+        loginLogoEl.innerHTML = `<img src="${logoUrl}" alt="Logo CBT" class="w-full h-full object-contain">`;
+      } else {
+        loginLogoEl.className = "inline-flex items-center justify-center p-3 rounded-2xl bg-blue-50 text-blue-600 mb-2.5 sm:mb-3";
+        loginLogoEl.innerHTML = `<svg class="w-7 h-7 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>`;
+      }
+    }
+
+    document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach((link) => {
+      link.href = logoUrl || 'icons/icon.svg';
+    });
   }
 
   // ===================== PWA PROMPT =====================
@@ -375,9 +455,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const scheduleBadgeEl = document.getElementById('loginScheduleBadge');
     const scheduleTextEl = document.getElementById('loginScheduleText');
 
-    const schoolCfg = window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : { schoolName: 'SMP NEGERI 2 PACET' };
+    const schoolCfg = window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : { schoolName: 'SMP NEGERI 2 PACET', logoCbt: '' };
     if (headerSchoolEl) headerSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
     if (loginSchoolEl) loginSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
+    applyCbtBrandLogo(schoolCfg.logoCbt || '');
 
     const cfg = window.examEngine.config;
     const classPart = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
@@ -2629,8 +2710,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     currentLogoLeftBase64 = cfg.logoLeft || '';
     currentLogoRightBase64 = cfg.logoRight || '';
+    currentLogoCbtBase64 = cfg.logoCbt || '';
     renderLogoPreview('left', currentLogoLeftBase64);
     renderLogoPreview('right', currentLogoRightBase64);
+    renderLogoPreview('cbt', currentLogoCbtBase64);
   }
 
   const formSchoolConfig = document.getElementById('formSchoolConfig');
@@ -2646,12 +2729,13 @@ document.addEventListener('DOMContentLoaded', () => {
         headmasterName: document.getElementById('cfgHeadmasterName').value.trim(),
         headmasterNip: document.getElementById('cfgHeadmasterNip').value.trim(),
         logoLeft: currentLogoLeftBase64,
-        logoRight: currentLogoRightBase64
+        logoRight: currentLogoRightBase64,
+        logoCbt: currentLogoCbtBase64
       };
       const res = window.cbtAdmin.saveSchoolConfig(payload);
       if (res.success) {
         renderConfigInfoOnLogin();
-        alert("Identitas Sekolah, Logo Kop Surat, & Titi Mangsa Kepala Sekolah berhasil disimpan!");
+        alert("Identitas Sekolah, Logo Kop Surat, Logo CBT & Titi Mangsa Kepala Sekolah berhasil disimpan!");
       } else {
         alert("Gagal menyimpan konfigurasi sekolah: " + res.message);
       }

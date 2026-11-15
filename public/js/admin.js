@@ -990,7 +990,8 @@ class CBTAdmin {
           headmasterName: parsed.headmasterName || "Drs. H. Mulyono, M.Pd.",
           headmasterNip: parsed.headmasterNip || "19680512 199403 1 004",
           logoLeft: parsed.logoLeft || "",
-          logoRight: parsed.logoRight || ""
+          logoRight: parsed.logoRight || "",
+          logoCbt: parsed.logoCbt || ""
         };
       }
     } catch (e) {}
@@ -1003,7 +1004,8 @@ class CBTAdmin {
       headmasterName: "Drs. H. Mulyono, M.Pd.",
       headmasterNip: "19680512 199403 1 004",
       logoLeft: "",
-      logoRight: ""
+      logoRight: "",
+      logoCbt: ""
     };
   }
 
