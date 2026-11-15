@@ -67,22 +67,12 @@
         </div>
       </div>
 
-      <!-- Action Buttons Right -->
+      <!-- Action Buttons Right (Bersih pada Tampilan Siswa) -->
       <div class="flex items-center gap-2">
-        <div id="cloudStatusBadge" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+        <div id="cloudStatusBadge" class="hidden items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
           <span class="w-2 h-2 rounded-full bg-slate-400" id="cloudStatusDot"></span>
           <span id="cloudStatusText">Mode Lokal</span>
         </div>
-
-        <button id="btnPwaInstall" type="button" class="hidden px-2.5 py-1.5 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition items-center gap-1 cursor-pointer">
-          <span>📲 Pasang Aplikasi</span>
-        </button>
-
-        <button id="btnOpenAdminLogin" type="button" class="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-300 transition flex items-center gap-1.5 cursor-pointer shadow-xs">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-          <span class="hidden sm:inline">🔐 Panel Proktor &amp; Guru</span>
-          <span class="sm:hidden">Proktor / Guru</span>
-        </button>
       </div>
 
     </div>
@@ -119,6 +109,11 @@
             <input type="password" id="studentPassword" required placeholder="Masukkan Password Siswa" class="w-full px-3.5 sm:px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-medium transition outline-none">
           </div>
 
+          <div id="loginScheduleSelectGroup" class="hidden">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1" for="studentScheduleSelect">Pilih Mata Pelajaran Ujian Aktif</label>
+            <select id="studentScheduleSelect" class="w-full px-3.5 sm:px-4 py-2.5 rounded-xl border border-blue-300 bg-blue-50/50 text-blue-900 font-bold text-sm outline-none focus:ring-2 focus:ring-blue-500 transition"></select>
+          </div>
+
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1" for="studentToken">Token Masuk Ujian</label>
             <input type="text" id="studentToken" required placeholder="Masukkan Token Ujian" class="w-full px-3.5 sm:px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-bold tracking-widest text-blue-700 uppercase transition outline-none">
@@ -128,18 +123,25 @@
             </p>
           </div>
 
+          <div id="loginRejectionBanner" class="hidden p-3.5 rounded-2xl bg-red-50 border border-red-300 text-xs text-red-800 leading-relaxed font-medium"></div>
+
           <button type="submit" class="w-full mt-2 py-3 px-4 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.99] transition shadow-md shadow-blue-500/20 cursor-pointer flex items-center justify-center gap-2">
             <span>Masuk ke Lembar Konfirmasi</span>
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
           </button>
         </form>
 
-        <div class="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center gap-3 text-slate-400 text-[11px] font-medium">
-          <span>💻 Laptop</span>
-          <span>•</span>
-          <span>🌐 Chromebook</span>
-          <span>•</span>
-          <span>📱 Tab &amp; Ponsel</span>
+        <div class="mt-5 pt-4 border-t border-slate-100 flex flex-col items-center gap-2 text-slate-400 text-[11px] font-medium">
+          <div class="flex items-center justify-center gap-3">
+            <span>💻 Laptop</span>
+            <span>•</span>
+            <span>🌐 Chromebook</span>
+            <span>•</span>
+            <span>📱 Tab &amp; Ponsel</span>
+          </div>
+          <button id="btnOpenAdminLogin" type="button" class="text-[11px] text-slate-400 hover:text-blue-600 transition cursor-pointer">
+            Login Guru &amp; Proktor
+          </button>
         </div>
       </div>
     </section>
@@ -429,7 +431,7 @@
               <h2 id="adminTeacherNameDisplay" class="text-base sm:text-lg font-bold text-slate-900">Panel Guru: Rekapitulasi Otomatis</h2>
               <span id="adminRoleBadge" class="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-700">Guru Mapel</span>
             </div>
-            <p id="adminSubjectDisplay" class="text-[11px] sm:text-xs text-slate-500 font-medium">Mata Pelajaran: Semua Mapel</p>
+            <p id="adminSubjectDisplay" class="text-[11px] sm:text-xs text-slate-500 font-medium">Panel Manajemen Ujian Sekolah</p>
           </div>
         </div>
 
@@ -441,10 +443,13 @@
         </div>
       </div>
 
-      <!-- Admin Tabs Navigation (6 Tabs) -->
+      <!-- Admin Tabs Navigation (7 Tabs) -->
       <div class="flex border-b border-slate-200 gap-2 overflow-x-auto pb-1 text-xs sm:text-sm">
         <button id="adminTabBtnResults" type="button" data-tab="tabResults" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border-2 border-blue-600 bg-blue-50 text-blue-600 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
           <span>📊 Rekap Nilai (Ranking)</span>
+        </button>
+        <button id="adminTabBtnMonitoring" type="button" data-tab="tabMonitoring" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border-2 border-transparent text-slate-600 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
+          <span>📡 Pantau Login Siswa</span>
         </button>
         <button id="adminTabBtnSchedules" type="button" data-tab="tabSchedules" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border-2 border-transparent text-slate-600 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
           <span>📅 Jadwal &amp; Aktifkan Mapel</span>
@@ -575,16 +580,129 @@
         </div>
       </div>
 
+      <!-- TAB BARU (ADMIN & GURU MAPEL): PANTAU DAFTAR LOGIN SISWA & BATAS PERCOBAAN -->
+      <div id="tabMonitoring" class="admin-tab-pane hidden flex flex-col gap-4">
+
+        <!-- Pengaturan Batas Percobaan Ujian (Admin & Guru Mapel) -->
+        <div class="bg-indigo-50/70 border border-indigo-200 rounded-3xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-xs sm:text-sm font-bold text-indigo-950">🛡️ Batas Percobaan &amp; Penolakan Ujian Ulang</h3>
+            <p class="text-[11px] text-indigo-700">Atur berapa kali siswa diperbolehkan mengikuti ujian mapel yang sama (misal: 1x agar langsung ditolak jika sudah selesai, atau 2x jika boleh mengulang).</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <select id="attemptRuleSubject" class="px-3 py-2 rounded-xl border border-indigo-300 bg-white font-bold text-indigo-900 outline-none"></select>
+            <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-indigo-300">
+              <span class="font-bold text-slate-600">Maks:</span>
+              <input type="number" id="attemptRuleMax" min="1" max="10" value="1" class="w-12 text-center font-black text-blue-700 outline-none">
+              <span class="font-semibold text-slate-500">Kali</span>
+            </div>
+            <button id="btnSaveAttemptRule" type="button" class="px-3.5 py-2 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition cursor-pointer shadow-xs">
+              💾 Simpan Batas
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 KPI Pemantauan -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-black flex-shrink-0">🔑</div>
+            <div>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sedang Login</p>
+              <div id="monKpiLoggedIn" class="text-lg sm:text-2xl font-black text-amber-600">0</div>
+              <p class="text-[10px] text-slate-400">Di lembar konfirmasi</p>
+            </div>
+          </div>
+
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-black flex-shrink-0">✍️</div>
+            <div>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sedang Mengerjakan</p>
+              <div id="monKpiInProgress" class="text-lg sm:text-2xl font-black text-blue-600">0</div>
+              <p class="text-[10px] text-slate-400">Aktif di ruang ujian</p>
+            </div>
+          </div>
+
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black flex-shrink-0">✅</div>
+            <div>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sudah Selesai</p>
+              <div id="monKpiCompleted" class="text-lg sm:text-2xl font-black text-emerald-600">0</div>
+              <p class="text-[10px] text-slate-400">Mengumpulkan jawaban</p>
+            </div>
+          </div>
+
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black flex-shrink-0">⏳</div>
+            <div>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Belum Login</p>
+              <div id="monKpiNotLoggedIn" class="text-lg sm:text-2xl font-black text-slate-700">0</div>
+              <p class="text-[10px] text-slate-400">Dari daftar peserta</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter & Refresh Bar -->
+        <div class="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div class="flex flex-wrap items-center gap-2">
+            <select id="filterMonitoringSubject" class="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-blue-700 bg-white outline-none"></select>
+            <select id="filterMonitoringClass" class="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-slate-700 bg-white outline-none"></select>
+            <select id="filterMonitoringStatus" class="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-slate-700 bg-white outline-none">
+              <option value="ACTIVE">Sedang Login / Mengerjakan / Selesai</option>
+              <option value="logged_in">Hanya Sedang Login</option>
+              <option value="in_progress">Hanya Sedang Mengerjakan</option>
+              <option value="completed">Hanya Sudah Selesai</option>
+              <option value="not_logged_in">Belum Login</option>
+              <option value="ALL">Semua Siswa</option>
+            </select>
+            <input type="text" id="searchMonitoringInput" placeholder="Cari nama / NISN..." class="px-3 py-1.5 rounded-xl border border-slate-300 w-44 outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+
+          <button id="btnRefreshMonitoring" type="button" class="px-3.5 py-1.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1.5">
+            <span>🔄 Refresh Pantauan</span>
+          </button>
+        </div>
+
+        <!-- Tabel Status Login & Pengerjaan Siswa -->
+        <div class="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
+          <div class="overflow-x-auto max-h-[520px]">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-600 uppercase tracking-wider font-bold text-[11px]">
+                <tr>
+                  <th class="p-3 text-center w-10">No</th>
+                  <th class="p-3">Nama Siswa &amp; NISN</th>
+                  <th class="p-3">Kelas</th>
+                  <th class="p-3">Mata Pelajaran</th>
+                  <th class="p-3 text-center">Status Ujian</th>
+                  <th class="p-3 text-center">Progres &amp; Percobaan</th>
+                  <th class="p-3 text-center">Sisa Waktu / Curang</th>
+                  <th class="p-3">Aktivitas Terakhir</th>
+                  <th class="p-3 text-center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="adminMonitoringTbody"></tbody>
+            </table>
+          </div>
+          <div id="adminMonitoringEmpty" class="hidden text-center py-10 text-slate-400">
+            <p class="font-semibold text-sm">Belum ada aktivitas login siswa sesuai filter.</p>
+          </div>
+        </div>
+      </div>
+
       <!-- TAB BARU (KHUSUS ADMIN): JADWAL UJIAN & AKTIFKAN MAPEL -->
       <div id="tabSchedules" class="admin-tab-pane hidden flex flex-col gap-4">
         <div class="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 class="text-sm sm:text-base font-bold text-slate-900">Jadwal Ujian &amp; Aktivasi Mata Pelajaran</h3>
-            <p class="text-xs text-slate-500">Khusus Panel Admin: Atur hari, tanggal, mata pelajaran, &amp; kelas, lalu klik <strong>Aktifkan Mapel</strong> saat ujian berlangsung.</p>
+            <h3 class="text-sm sm:text-base font-bold text-slate-900">Jadwal Ujian &amp; Aktivasi Multi-Mapel</h3>
+            <p class="text-xs text-slate-500">Anda dapat mengaktifkan <strong>lebih dari 1 mata pelajaran secara bersamaan</strong> (misal Kelas 7, 8, 9 ujian serentak).</p>
           </div>
-          <div id="activeScheduleBanner" class="px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span id="activeScheduleBannerText">Mapel Aktif: -</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <div id="activeScheduleBanner" class="px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span id="activeScheduleBannerText">Mapel Aktif: -</span>
+            </div>
+            <button id="btnDeactivateAllSchedules" type="button" class="hidden px-3 py-2 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition cursor-pointer">
+              Nonaktifkan Semua
+            </button>
           </div>
         </div>
 
@@ -635,16 +753,20 @@
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-2.5">
+              <div class="grid grid-cols-3 gap-2">
                 <div>
-                  <label class="block font-bold text-slate-700 mb-1" for="schInputDuration">Durasi (Menit)</label>
-                  <input type="number" id="schInputDuration" min="1" max="300" value="80" required class="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputDuration">Durasi (Mnt)</label>
+                  <input type="number" id="schInputDuration" min="1" max="300" value="80" required class="w-full px-2.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div>
-                  <label class="block font-bold text-slate-700 mb-1" for="schInputToken">Token Ujian</label>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputMaxAttempts">Maks. Uji</label>
+                  <input type="number" id="schInputMaxAttempts" min="1" max="10" value="1" required title="Berapa kali siswa boleh ikut ujian ini" class="w-full px-2.5 py-2 rounded-xl border border-slate-300 font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="schInputToken">Token</label>
                   <div class="flex gap-1">
-                    <input type="text" id="schInputToken" required placeholder="MTK7A" class="w-full px-2.5 py-2 rounded-xl border border-slate-300 font-bold uppercase text-blue-700 outline-none focus:ring-2 focus:ring-blue-500">
-                    <button type="button" id="btnSchRandomToken" class="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold cursor-pointer" title="Acak Token">🎲</button>
+                    <input type="text" id="schInputToken" required placeholder="MTK7A" class="w-full px-2 py-2 rounded-xl border border-slate-300 font-bold uppercase text-blue-700 outline-none focus:ring-2 focus:ring-blue-500">
+                    <button type="button" id="btnSchRandomToken" class="px-2 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold cursor-pointer" title="Acak Token">🎲</button>
                   </div>
                 </div>
               </div>
@@ -659,7 +781,7 @@
           <div class="lg:col-span-8 bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
             <div class="p-3.5 border-b border-slate-100 flex items-center justify-between gap-2">
               <span class="font-bold text-xs sm:text-sm text-slate-800">Daftar Jadwal Mata Pelajaran</span>
-              <span class="text-[11px] text-slate-500">Klik <strong>Aktifkan Mapel</strong> untuk mengganti ujian aktif siswa</span>
+              <span class="text-[11px] text-slate-500">Klik <strong>Aktifkan Mapel</strong> pada satu atau banyak mapel</span>
             </div>
             <div class="overflow-x-auto">
               <table class="w-full text-left border-collapse text-xs">
@@ -883,10 +1005,14 @@
                 </div>
               </div>
 
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1">
                 <div>
                   <label class="block font-bold text-slate-700 mb-1" for="cfgMaxCheats">Toleransi Pindah Tab</label>
                   <input type="number" id="cfgMaxCheats" min="1" max="10" value="3" required class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1" for="cfgMaxAttempts">Maks. Percobaan Ujian</label>
+                  <input type="number" id="cfgMaxAttempts" min="1" max="10" value="1" required title="1 = ditolak jika sudah selesai; 2 = boleh 2x ujian" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-indigo-700 focus:ring-2 focus:ring-blue-500 outline-none">
                 </div>
                 <div>
                   <label class="block font-bold text-slate-700 mb-1" for="cfgAdminPin">PIN Akun Saat Ini</label>
@@ -1578,14 +1704,28 @@
     </div>
   </div>
 
+  <!-- LAYAR PELINDUNG ANTI-SCREENSHOT & KUNCI FOKUS -->
+  <div id="examPrivacyShield" class="hidden fixed inset-0 z-[60] bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center select-none">
+    <div class="w-16 h-16 rounded-3xl bg-red-600/20 border border-red-500/40 text-red-400 flex items-center justify-center mb-4">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+    </div>
+    <h3 class="text-lg sm:text-xl font-black text-white mb-2">LAYAR UJIAN TERKUNCI</h3>
+    <p id="privacyShieldReason" class="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed">
+      Layar soal disembunyikan untuk mencegah tangkapan layar atau perpindahan aplikasi.
+    </p>
+    <button id="btnResumeFromPrivacyShield" type="button" class="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-lg cursor-pointer transition">
+      🔓 Kembali ke Layar Penuh Ujian
+    </button>
+  </div>
+
   <!-- ======================== SCRIPTS ======================== -->
-  <script src="js/default-questions.js?v=3.6"></script>
-  <script src="js/default-teachers.js?v=3.6"></script>
-  <script src="js/default-students.js?v=3.6"></script>
-  <script src="js/supabase-config.js?v=3.6"></script>
-  <script src="js/exam-engine.js?v=3.6"></script>
-  <script src="js/admin.js?v=3.6"></script>
-  <script src="js/app.js?v=3.6"></script>
+  <script src="js/default-questions.js?v=3.7"></script>
+  <script src="js/default-teachers.js?v=3.7"></script>
+  <script src="js/default-students.js?v=3.7"></script>
+  <script src="js/supabase-config.js?v=3.7"></script>
+  <script src="js/exam-engine.js?v=3.7"></script>
+  <script src="js/admin.js?v=3.7"></script>
+  <script src="js/app.js?v=3.7"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

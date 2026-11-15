@@ -10,7 +10,9 @@ const DEFAULT_SCHEDULES = [
     classLevel: "Kelas 7",
     timeRange: "07:30 - 08:50",
     durationMinutes: 80,
-    token: "MTK7A"
+    token: "MTK7A",
+    maxAttempts: 1,
+    isActive: false
   },
   {
     id: "sch_2",
@@ -21,7 +23,9 @@ const DEFAULT_SCHEDULES = [
     classLevel: "Kelas 8",
     timeRange: "09:15 - 10:35",
     durationMinutes: 80,
-    token: "BIN8A"
+    token: "BIN8A",
+    maxAttempts: 1,
+    isActive: false
   },
   {
     id: "sch_3",
@@ -32,7 +36,9 @@ const DEFAULT_SCHEDULES = [
     classLevel: "Kelas 9",
     timeRange: "07:30 - 08:50",
     durationMinutes: 80,
-    token: "IPA9A"
+    token: "IPA9A",
+    maxAttempts: 1,
+    isActive: false
   }
 ];
 
@@ -715,6 +721,28 @@ class CBTAdmin {
     localStorage.removeItem('cbt_exam_results');
   }
 
+  async resetStudentAttempts(nisn, subject) {
+    const cleanNisn = String(nisn || '').trim().toUpperCase();
+    const cleanSub = String(subject || '').trim().toLowerCase();
+    if (!cleanNisn) return { success: false };
+
+    try {
+      const localResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+      const filtered = (Array.isArray(localResults) ? localResults : []).filter(r => {
+        const rNisn = String(r.student?.nisn || r.student_nisn || '').trim().toUpperCase();
+        const rSub = String(r.subject || '').trim().toLowerCase();
+        return !(rNisn === cleanNisn && (!cleanSub || rSub === cleanSub));
+      });
+      localStorage.setItem('cbt_exam_results', JSON.stringify(filtered));
+    } catch (e) {}
+
+    if (typeof window !== 'undefined' && window.supabaseSync) {
+      await window.supabaseSync.deleteStudentResultsFromCloud(nisn, subject);
+      await window.supabaseSync.removeStudentSession(nisn, subject);
+    }
+    return { success: true };
+  }
+
   // ===================== 1. EXPORT FORMAT EXCEL (.xlsx) =====================
   exportResultsExcel(subjectFilter = null, classFilter = null) {
     const results = this.getAllResultsSorted(subjectFilter, classFilter);
@@ -1162,7 +1190,17 @@ class CBTAdmin {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const activeId = (typeof window !== 'undefined' && window.examEngine && window.examEngine.config)
+            ? window.examEngine.config.activeScheduleId
+            : '';
+          const hasExplicitFlag = parsed.some(s => typeof s.isActive === 'boolean');
+          return parsed.map(s => ({
+            ...s,
+            maxAttempts: Math.max(1, parseInt(s.maxAttempts, 10) || 1),
+            isActive: hasExplicitFlag ? Boolean(s.isActive) : Boolean(activeId && s.id === activeId)
+          }));
+        }
       } catch (e) {
         console.error("Gagal load schedules:", e);
       }
@@ -1183,7 +1221,11 @@ class CBTAdmin {
     return [...this.schedules].sort((a, b) => String(a.dateIso || '').localeCompare(String(b.dateIso || '')));
   }
 
-  addSchedule({ day, dateIso, subject, classLevel, timeRange, durationMinutes, token }) {
+  getActiveSchedules() {
+    return this.getAllSchedules().filter(s => Boolean(s.isActive));
+  }
+
+  addSchedule({ day, dateIso, subject, classLevel, timeRange, durationMinutes, token, maxAttempts }) {
     if (!this.isSuperAdminUser()) {
       return { success: false, message: "Hanya Admin / Proktor yang dapat menambah jadwal ujian!" };
     }
@@ -1194,6 +1236,7 @@ class CBTAdmin {
     const cleanTime = String(timeRange || "").trim() || "07:30 - 08:50";
     const cleanDuration = parseInt(durationMinutes, 10) || 80;
     const cleanToken = String(token || "").trim().toUpperCase() || this.generateRandomToken();
+    const cleanAttempts = Math.max(1, Math.min(20, parseInt(maxAttempts, 10) || 1));
 
     if (!cleanSubject || !cleanDateIso) {
       return { success: false, message: "Tanggal Ujian dan Mata Pelajaran wajib diisi!" };
@@ -1208,7 +1251,9 @@ class CBTAdmin {
       classLevel: cleanClass,
       timeRange: cleanTime,
       durationMinutes: cleanDuration,
-      token: cleanToken
+      token: cleanToken,
+      maxAttempts: cleanAttempts,
+      isActive: false
     };
 
     this.schedules.push(newItem);
@@ -1234,7 +1279,11 @@ class CBTAdmin {
           classLevel: payload.classLevel ? String(payload.classLevel).trim() : s.classLevel,
           timeRange: payload.timeRange !== undefined ? String(payload.timeRange).trim() : s.timeRange,
           durationMinutes: parseInt(payload.durationMinutes, 10) || s.durationMinutes || 80,
-          token: payload.token ? String(payload.token).trim().toUpperCase() : s.token
+          token: payload.token ? String(payload.token).trim().toUpperCase() : s.token,
+          maxAttempts: payload.maxAttempts !== undefined
+            ? Math.max(1, Math.min(20, parseInt(payload.maxAttempts, 10) || 1))
+            : (s.maxAttempts || 1),
+          isActive: Boolean(s.isActive)
         };
         return updatedItem;
       }
@@ -1244,7 +1293,7 @@ class CBTAdmin {
     if (!updatedItem) return { success: false, message: "Jadwal tidak ditemukan!" };
     this.saveSchedules(this.schedules);
 
-    if (window.examEngine && window.examEngine.config.activeScheduleId === id) {
+    if (updatedItem.isActive && window.examEngine && window.examEngine.config.activeScheduleId === id) {
       this.activateSchedule(id);
     }
     return { success: true, schedule: updatedItem };
@@ -1258,7 +1307,12 @@ class CBTAdmin {
     this.saveSchedules(this.schedules);
 
     if (window.examEngine && window.examEngine.config.activeScheduleId === id) {
-      this.deactivateSchedule();
+      const remaining = this.getActiveSchedules();
+      if (remaining.length > 0) {
+        this.activateSchedule(remaining[0].id);
+      } else {
+        this.deactivateSchedule(null);
+      }
     }
     return { success: true };
   }
@@ -1267,10 +1321,19 @@ class CBTAdmin {
     if (!this.isSuperAdminUser()) {
       return { success: false, message: "Fitur Aktifkan Mapel hanya tersedia di Panel Proktor / Admin!" };
     }
-    const sched = this.schedules.find(s => s.id === id);
+    let sched = null;
+    this.schedules = this.schedules.map(s => {
+      if (s.id === id) {
+        sched = { ...s, isActive: true };
+        return sched;
+      }
+      return s;
+    });
     if (!sched) {
       return { success: false, message: "Jadwal ujian tidak ditemukan!" };
     }
+
+    this.saveSchedules(this.schedules);
 
     if (window.examEngine) {
       window.examEngine.saveConfig({
@@ -1282,27 +1345,52 @@ class CBTAdmin {
         durationMinutes: sched.durationMinutes || 80,
         examToken: sched.token || window.examEngine.config.examToken,
         activeScheduleId: sched.id,
+        maxAttempts: sched.maxAttempts || window.examEngine.config.maxAttempts || 1,
         showScoreToStudent: false
       });
     }
     return { success: true, schedule: sched };
   }
 
-  deactivateSchedule() {
+  deactivateSchedule(id = null) {
     if (!this.isSuperAdminUser()) {
       return { success: false, message: "Hanya Admin / Proktor yang dapat menonaktifkan jadwal!" };
     }
+    this.schedules = this.schedules.map(s => {
+      if (id === null || s.id === id) {
+        return { ...s, isActive: false };
+      }
+      return s;
+    });
+    this.saveSchedules(this.schedules);
+
+    const remainingActive = this.getActiveSchedules();
     if (window.examEngine) {
-      window.examEngine.saveConfig({
-        activeScheduleId: "",
-        scheduleDay: "",
-        scheduleDate: "",
-        scheduleTime: "",
-        targetClass: "Semua Kelas",
-        showScoreToStudent: false
-      });
+      if (remainingActive.length > 0) {
+        const next = remainingActive[0];
+        window.examEngine.saveConfig({
+          subject: next.subject,
+          targetClass: next.classLevel || "Semua Kelas",
+          scheduleDay: next.day,
+          scheduleDate: next.dateFormatted || this.formatIndonesianDate(next.dateIso),
+          scheduleTime: next.timeRange || "",
+          durationMinutes: next.durationMinutes || 80,
+          examToken: next.token || window.examEngine.config.examToken,
+          activeScheduleId: next.id,
+          showScoreToStudent: false
+        });
+      } else {
+        window.examEngine.saveConfig({
+          activeScheduleId: "",
+          scheduleDay: "",
+          scheduleDate: "",
+          scheduleTime: "",
+          targetClass: "Semua Kelas",
+          showScoreToStudent: false
+        });
+      }
     }
-    return { success: true };
+    return { success: true, activeCount: remainingActive.length };
   }
 
   // ===================== BACKUP & PULIHKAN SELURUH DATA SEKOLAH =====================

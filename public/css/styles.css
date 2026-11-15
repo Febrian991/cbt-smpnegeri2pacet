@@ -130,6 +130,25 @@ input, textarea, select {
   background: #94a3b8;
 }
 
+/* Exam Screen Lock & Anti-Screenshot Hardening */
+body.exam-locked,
+body.exam-locked #viewExamRoom,
+body.exam-locked #viewExamRoom *,
+body.exam-locked #viewExamConfirm,
+body.exam-locked #viewExamConfirm * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+  -webkit-user-drag: none !important;
+}
+
+body.exam-locked img {
+  pointer-events: none !important;
+  -webkit-user-drag: none !important;
+}
+
 /* ==========================================================================
    PRINT STYLING (KARTU PESERTA, REKAP GURU, & BUKTI SISWA)
    ========================================================================== */
@@ -137,6 +156,22 @@ input, textarea, select {
   @page {
     margin: 8mm;
     size: A4 portrait;
+  }
+
+  body.exam-locked * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  body.exam-locked::before {
+    content: "Pencetakan & Tangkapan Layar Diblokir Selama Ujian Berlangsung.";
+    display: block !important;
+    visibility: visible !important;
+    padding: 40px 20px;
+    font-weight: 800;
+    font-size: 18px;
+    text-align: center;
+    color: #b91c1c;
   }
 
   body {

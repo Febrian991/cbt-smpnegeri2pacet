@@ -16,6 +16,8 @@ const DEFAULT_EXAM_CONFIG = {
   examToken: "CBT80M",
   showScoreToStudent: false, // Nilai dirahasiakan dari siswa
   maxCheatViolations: 3,
+  maxAttempts: 1,
+  subjectMaxAttempts: {},
   adminPin: "admin123"
 };
 

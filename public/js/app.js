@@ -16,9 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const modalQuestionForm = document.getElementById('modalQuestionForm');
   const modalAdminPin = document.getElementById('modalAdminPin');
 
-  // PWA Install Button
-  const btnPwaInstall = document.getElementById('btnPwaInstall');
-  let deferredPrompt = null;
+  // Privacy Shield (Anti-Screenshot & Lock)
+  const examPrivacyShield = document.getElementById('examPrivacyShield');
+  const btnResumeFromPrivacyShield = document.getElementById('btnResumeFromPrivacyShield');
 
   // Temp State
   let tempStudent = null;
@@ -26,15 +26,19 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentLogoLeftBase64 = "";
   let currentLogoRightBase64 = "";
   let currentLogoCbtBase64 = "";
+  let monitoringRefreshTimer = null;
+  let cachedMonitoringSessions = [];
 
   function init() {
     renderConfigInfoOnLogin();
     setupPwaPrompt();
     setupKeyboardShortcuts();
+    setupPrivacyShieldListeners();
     setupImageUploader();
     setupSchoolLogoUploaders();
     setupStudentNisnDetection();
     setupSubjectAndClassFilters();
+    setupMonitoringControls();
     setupAdminLoginHelpers();
     updateCloudBadge();
 
@@ -74,6 +78,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     showView('login');
     syncFromCloud(false);
+
+    // Shortcut URL ?admin / #admin / #guru untuk Proktor & Guru
+    const hashLower = (window.location.hash || '').toLowerCase();
+    const searchLower = (window.location.search || '').toLowerCase();
+    if (hashLower.includes('admin') || hashLower.includes('guru') || searchLower.includes('admin') || searchLower.includes('guru')) {
+      if (modalAdminPin) modalAdminPin.classList.remove('hidden');
+    }
   }
 
   function applyCloudState(stateMap) {
@@ -369,29 +380,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ===================== PWA PROMPT =====================
+  // ===================== NONAKTIFKAN BANNER INSTALASI DI TAMPILAN SISWA =====================
   function setupPwaPrompt() {
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
-      deferredPrompt = e;
-      if (btnPwaInstall) {
-        btnPwaInstall.classList.remove('hidden');
-        btnPwaInstall.classList.add('flex');
-      }
     });
+  }
 
-    if (btnPwaInstall) {
-      btnPwaInstall.addEventListener('click', async () => {
-        if (deferredPrompt) {
-          deferredPrompt.prompt();
-          const { outcome } = await deferredPrompt.userChoice;
-          if (outcome === 'accepted') {
-            btnPwaInstall.classList.add('hidden');
+  function setupPrivacyShieldListeners() {
+    if (btnResumeFromPrivacyShield) {
+      btnResumeFromPrivacyShield.addEventListener('click', () => {
+        if (examPrivacyShield) examPrivacyShield.classList.add('hidden');
+        try {
+          if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen();
           }
-          deferredPrompt = null;
-        } else {
-          alert("Aplikasi ini dapat dipasang lewat menu browser Anda (Pilih 'Tambahkan ke Layar Utama' / 'Install App').");
-        }
+        } catch (err) {}
+        if (window.examEngine) window.examEngine.acquireScreenLock();
       });
     }
   }
@@ -415,11 +422,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (type === 'single') {
           e.preventDefault();
           window.examEngine.selectSingleAnswer(selectedOptionKey);
+          window.examEngine.syncLiveStudentProgress(false);
           renderExamRoom();
           renderQuestionPalette();
         } else if (type === 'multiple') {
           e.preventDefault();
           window.examEngine.toggleMultipleAnswer(selectedOptionKey);
+          window.examEngine.syncLiveStudentProgress(false);
           renderExamRoom();
           renderQuestionPalette();
         }
@@ -446,30 +455,46 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function renderConfigInfoOnLogin() {
-    const titleEl = document.getElementById('loginExamTitle');
+  function showLoginRejection(msg) {
+    const banner = document.getElementById('loginRejectionBanner');
+    if (!banner) return;
+    if (msg) {
+      banner.innerText = msg;
+      banner.classList.remove('hidden');
+    } else {
+      banner.innerText = '';
+      banner.classList.add('hidden');
+    }
+  }
+
+  function updateLoginDisplayForSchedule(sched) {
     const subtitleEl = document.getElementById('loginExamSubtitle');
     const tokenHintEl = document.getElementById('loginTokenHint');
-    const headerSchoolEl = document.getElementById('headerSchoolName');
-    const loginSchoolEl = document.getElementById('loginSchoolName');
     const scheduleBadgeEl = document.getElementById('loginScheduleBadge');
     const scheduleTextEl = document.getElementById('loginScheduleText');
-
-    const schoolCfg = window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : { schoolName: 'SMP NEGERI 2 PACET', logoCbt: '' };
-    if (headerSchoolEl) headerSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
-    if (loginSchoolEl) loginSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
-    applyCbtBrandLogo(schoolCfg.logoCbt || '');
-
     const cfg = window.examEngine.config;
-    const classPart = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
 
-    if (titleEl) titleEl.innerText = cfg.examTitle;
-    if (subtitleEl) subtitleEl.innerText = `${cfg.subject}${classPart} • Alokasi Waktu: ${cfg.durationMinutes} Menit`;
+    const targetSubject = sched ? sched.subject : cfg.subject;
+    const targetClass = sched ? sched.classLevel : cfg.targetClass;
+    const targetDuration = sched ? (sched.durationMinutes || 80) : cfg.durationMinutes;
+    const targetToken = sched ? (sched.token || cfg.examToken) : cfg.examToken;
+    const targetDay = sched ? sched.day : cfg.scheduleDay;
+    const targetDate = sched ? (sched.dateFormatted || (window.cbtAdmin ? window.cbtAdmin.formatIndonesianDate(sched.dateIso) : '')) : cfg.scheduleDate;
+    const targetTime = sched ? (sched.timeRange || '') : cfg.scheduleTime;
+
+    const classPart = targetClass && targetClass !== 'Semua Kelas' ? ` (${targetClass})` : '';
+    if (subtitleEl) subtitleEl.innerText = `${targetSubject}${classPart} • Alokasi Waktu: ${targetDuration} Menit`;
 
     if (scheduleBadgeEl && scheduleTextEl) {
-      if (cfg.scheduleDay || cfg.scheduleDate) {
-        const datePart = [cfg.scheduleDay, cfg.scheduleDate].filter(Boolean).join(', ');
-        const timePart = cfg.scheduleTime ? ` • Pukul ${cfg.scheduleTime}` : '';
+      const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
+      if (activeList.length > 1 && sched) {
+        const datePart = [targetDay, targetDate].filter(Boolean).join(', ');
+        const timePart = targetTime ? ` • ${targetTime}` : '';
+        scheduleTextEl.innerText = `${activeList.length} Mapel Aktif Serentak • Dipilih: ${targetSubject}${classPart} (${datePart}${timePart})`;
+        scheduleBadgeEl.classList.remove('hidden');
+      } else if (targetDay || targetDate) {
+        const datePart = [targetDay, targetDate].filter(Boolean).join(', ');
+        const timePart = targetTime ? ` • Pukul ${targetTime}` : '';
         scheduleTextEl.innerText = `Jadwal Aktif: ${datePart}${timePart}`;
         scheduleBadgeEl.classList.remove('hidden');
       } else {
@@ -479,9 +504,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (tokenHintEl) {
       const span = tokenHintEl.querySelector('span');
-      if (span) span.innerText = `Token Ujian Aktif: ${cfg.examToken}`;
-      else tokenHintEl.innerText = `Token Ujian Aktif: ${cfg.examToken}`;
+      const hintText = `Token Ujian Aktif: ${targetToken}`;
+      if (span) span.innerText = hintText;
+      else tokenHintEl.innerText = hintText;
     }
+  }
+
+  function renderConfigInfoOnLogin() {
+    const titleEl = document.getElementById('loginExamTitle');
+    const headerSchoolEl = document.getElementById('headerSchoolName');
+    const loginSchoolEl = document.getElementById('loginSchoolName');
+    const selectGroup = document.getElementById('loginScheduleSelectGroup');
+    const selectEl = document.getElementById('studentScheduleSelect');
+
+    const schoolCfg = window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : { schoolName: 'SMP NEGERI 2 PACET', logoCbt: '' };
+    if (headerSchoolEl) headerSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
+    if (loginSchoolEl) loginSchoolEl.innerText = schoolCfg.schoolName || 'SMP NEGERI 2 PACET';
+    applyCbtBrandLogo(schoolCfg.logoCbt || '');
+
+    const cfg = window.examEngine.config;
+    if (titleEl) titleEl.innerText = cfg.examTitle;
+
+    const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
+    if (selectGroup && selectEl) {
+      const prevSelectedId = selectEl.value;
+      selectEl.innerHTML = '';
+
+      if (activeList.length > 1) {
+        activeList.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.innerText = `${s.subject} (${s.classLevel || 'Semua Kelas'}) — ${s.durationMinutes || 80} Mnt`;
+          selectEl.appendChild(opt);
+        });
+        if (prevSelectedId && activeList.some(s => s.id === prevSelectedId)) {
+          selectEl.value = prevSelectedId;
+        }
+        selectGroup.classList.remove('hidden');
+        selectEl.onchange = () => {
+          const picked = activeList.find(s => s.id === selectEl.value) || activeList[0];
+          updateLoginDisplayForSchedule(picked);
+        };
+      } else {
+        selectGroup.classList.add('hidden');
+      }
+    }
+
+    const picked = activeList.length > 1 && selectEl
+      ? (activeList.find(s => s.id === selectEl.value) || activeList[0])
+      : (activeList.length === 1 ? activeList[0] : null);
+
+    updateLoginDisplayForSchedule(picked);
   }
 
   function showView(viewName) {
@@ -489,7 +562,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (v) v.classList.add('hidden');
     });
 
+    if (viewName !== 'admin') {
+      stopMonitoringAutoRefresh();
+    }
+
     if (viewName === 'login') {
+      showLoginRejection('');
       renderConfigInfoOnLogin();
       viewLogin.classList.remove('hidden');
     } else if (viewName === 'confirm') {
@@ -502,6 +580,8 @@ document.addEventListener('DOMContentLoaded', () => {
       viewAdmin.classList.remove('hidden');
       renderAdminDashboard();
     }
+
+    updateCloudBadge();
   }
 
   // ===================== AUTODETEKSI NISN SISWA =====================
@@ -513,6 +593,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (studentNisnInput) {
       studentNisnInput.addEventListener('input', () => {
+        showLoginRejection('');
         const nisn = studentNisnInput.value.trim();
         if (nisn.length >= 3 && window.studentManager) {
           const student = window.studentManager.getStudentByNisn(nisn);
@@ -520,6 +601,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (studentFoundName) studentFoundName.innerText = student.name;
             if (studentFoundClass) studentFoundClass.innerText = `Kelas ${student.class}`;
             if (studentFoundHint) studentFoundHint.classList.remove('hidden');
+
+            const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
+            const selectEl = document.getElementById('studentScheduleSelect');
+            if (activeList.length > 1 && selectEl && window.examEngine) {
+              const matchingSch = activeList.find(s => window.examEngine.matchesClassLevel(s.classLevel || 'Semua Kelas', student.class));
+              if (matchingSch) {
+                selectEl.value = matchingSch.id;
+                updateLoginDisplayForSchedule(matchingSch);
+              }
+            }
           } else {
             if (studentFoundHint) studentFoundHint.classList.add('hidden');
           }
@@ -532,7 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function populateConfirmView(student) {
     if (!student) return;
-    const cfg = window.examEngine.config;
+    const cfg = (student && student.examConfig) ? student.examConfig : window.examEngine.config;
     const classPart = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
 
     document.getElementById('confirmName').innerText = student.name;
@@ -562,6 +653,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (studentLoginForm) {
     studentLoginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      showLoginRejection('');
       const nisn = document.getElementById('studentNisn').value.trim();
       const password = document.getElementById('studentPassword').value.trim();
       const token = document.getElementById('studentToken').value.trim().toUpperCase();
@@ -572,13 +664,15 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+        const activeTokens = (window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : []).map(s => String(s.token || '').toUpperCase());
+        const cfgToken = String(window.examEngine.config.examToken || '').toUpperCase();
         const needsRefresh =
-          (token && token !== String(window.examEngine.config.examToken || '').toUpperCase()) ||
+          (token && token !== cfgToken && !activeTokens.includes(token)) ||
           (window.studentManager && !window.studentManager.getStudentByNisn(nisn));
         if (cloudSyncPromise) {
           await cloudSyncPromise;
         } else if (needsRefresh) {
-          await syncFromCloud(true, false);
+          await syncFromCloud(true);
         }
       }
 
@@ -606,12 +700,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      const validToken = window.examEngine.config.examToken.toUpperCase();
-      if (token !== validToken) {
-        alert(`Token ujian salah! Masukkan token aktif: ${validToken}`);
-        return;
-      }
-
       let authenticatedStudent = null;
       if (window.studentManager) {
         const auth = window.studentManager.authenticateStudent(nisn, password);
@@ -624,16 +712,106 @@ document.addEventListener('DOMContentLoaded', () => {
         authenticatedStudent = { nisn, name: "Siswa Peserta", class: "Umum" };
       }
 
+      const activeSchedules = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
+      const selectEl = document.getElementById('studentScheduleSelect');
+      const selectedScheduleId = selectEl ? selectEl.value : '';
+      let matchedSchedule = null;
+
+      if (activeSchedules.length > 0) {
+        const selectedSchObj = activeSchedules.find(s => s.id === selectedScheduleId) || activeSchedules[0];
+        if (selectedSchObj && String(selectedSchObj.token || '').trim().toUpperCase() === token) {
+          matchedSchedule = selectedSchObj;
+        } else {
+          const tokenMatches = activeSchedules.filter(s => String(s.token || '').trim().toUpperCase() === token);
+          if (tokenMatches.length === 1) {
+            matchedSchedule = tokenMatches[0];
+          } else if (tokenMatches.length > 1) {
+            matchedSchedule = tokenMatches.find(s => window.examEngine.matchesClassLevel(s.classLevel || 'Semua Kelas', authenticatedStudent.class)) || tokenMatches[0];
+          }
+        }
+
+        if (!matchedSchedule) {
+          const hintToken = selectedSchObj ? selectedSchObj.token : window.examEngine.config.examToken;
+          alert(`Token ujian "${token}" tidak cocok dengan jadwal ujian yang sedang aktif! Token untuk jadwal terpilih (${selectedSchObj?.subject || '-'}): ${hintToken}`);
+          return;
+        }
+
+        if (matchedSchedule.classLevel && !window.examEngine.matchesClassLevel(matchedSchedule.classLevel, authenticatedStudent.class)) {
+          const msg = `⛔ Ujian Ditolak: Jadwal "${matchedSchedule.subject}" (${matchedSchedule.classLevel}) bukan untuk Kelas ${authenticatedStudent.class}. Pilih mata pelajaran lain yang sesuai kelas Anda.`;
+          showLoginRejection(msg);
+          alert(msg);
+          return;
+        }
+      } else {
+        const validToken = window.examEngine.config.examToken.toUpperCase();
+        if (token !== validToken) {
+          alert(`Token ujian salah! Masukkan token aktif: ${validToken}`);
+          return;
+        }
+        if (window.examEngine.config.targetClass && !window.examEngine.matchesClassLevel(window.examEngine.config.targetClass, authenticatedStudent.class)) {
+          const msg = `⛔ Ujian Ditolak: Ujian "${window.examEngine.config.subject}" saat ini dikhususkan untuk ${window.examEngine.config.targetClass}.`;
+          showLoginRejection(msg);
+          alert(msg);
+          return;
+        }
+      }
+
+      const targetExamConfig = matchedSchedule ? {
+        examTitle: window.examEngine.config.examTitle,
+        subject: matchedSchedule.subject,
+        targetClass: matchedSchedule.classLevel || 'Semua Kelas',
+        scheduleDay: matchedSchedule.day,
+        scheduleDate: matchedSchedule.dateFormatted || (window.cbtAdmin ? window.cbtAdmin.formatIndonesianDate(matchedSchedule.dateIso) : ''),
+        scheduleTime: matchedSchedule.timeRange || '',
+        durationMinutes: matchedSchedule.durationMinutes || 80,
+        examToken: matchedSchedule.token || window.examEngine.config.examToken,
+        activeScheduleId: matchedSchedule.id,
+        maxAttempts: matchedSchedule.maxAttempts || 1
+      } : {
+        ...window.examEngine.config
+      };
+
+      const maxAttempts = window.examEngine.getMaxAttemptsForSubject(targetExamConfig.subject, matchedSchedule);
+      const attemptStats = await window.examEngine.getStudentAttemptStats(authenticatedStudent.nisn, targetExamConfig.subject);
+
+      if (attemptStats.count >= maxAttempts) {
+        const rejectMsg = `⛔ Ujian Ditolak: Anda (${authenticatedStudent.name}) sudah menyelesaikan ujian mata pelajaran "${targetExamConfig.subject}" sebanyak ${attemptStats.count} kali (batas maksimal: ${maxAttempts} kali). Hubungi Proktor atau Guru Mapel jika memerlukan izin mengulang.`;
+        showLoginRejection(rejectMsg);
+        alert(rejectMsg);
+        return;
+      }
+
       tempStudent = {
         name: authenticatedStudent.name,
         nisn: authenticatedStudent.nisn,
         class: authenticatedStudent.class,
-        token: token
+        token: token,
+        attemptNumber: attemptStats.count + 1,
+        maxAttempts: maxAttempts,
+        examConfig: targetExamConfig
       };
 
       try {
         localStorage.setItem('cbt_confirm_student', JSON.stringify(tempStudent));
       } catch (err) {}
+
+      if (window.supabaseSync) {
+        const qCount = window.examEngine.getQuestionsForExam(targetExamConfig.subject, authenticatedStudent.class || targetExamConfig.targetClass).questions.length;
+        window.supabaseSync.upsertStudentSession({
+          nisn: authenticatedStudent.nisn,
+          name: authenticatedStudent.name,
+          class: authenticatedStudent.class,
+          subject: targetExamConfig.subject,
+          status: 'logged_in',
+          attemptNumber: tempStudent.attemptNumber,
+          answeredCount: 0,
+          totalQuestions: qCount,
+          remainingSeconds: (targetExamConfig.durationMinutes || 80) * 60,
+          cheatCount: 0,
+          loginAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
 
       populateConfirmView(tempStudent);
       showView('confirm');
@@ -643,6 +821,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCancelConfirm = document.getElementById('btnCancelConfirm');
   if (btnCancelConfirm) {
     btnCancelConfirm.addEventListener('click', () => {
+      if (tempStudent && window.supabaseSync) {
+        const sub = (tempStudent.examConfig && tempStudent.examConfig.subject) || window.examEngine.config.subject;
+        window.supabaseSync.removeStudentSession(tempStudent.nisn, sub);
+      }
       tempStudent = null;
       try { localStorage.removeItem('cbt_confirm_student'); } catch (e) {}
       showView('login');
@@ -660,8 +842,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (err) {}
 
+      const studentToStart = tempStudent;
+      const overrideCfg = studentToStart && studentToStart.examConfig ? studentToStart.examConfig : null;
       try { localStorage.removeItem('cbt_confirm_student'); } catch (e) {}
-      window.examEngine.startExam(tempStudent);
+      window.examEngine.startExam(studentToStart, overrideCfg);
       showView('examRoom');
       renderExamRoom();
     });
@@ -675,7 +859,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const type = q.type || 'single';
 
     const activeQs = window.examEngine.getExamQuestions();
-    document.getElementById('examSubjectHeader').innerText = window.examEngine.config.subject;
+    const activeExamCfg = window.examEngine.getActiveExamConfig();
+    document.getElementById('examSubjectHeader').innerText = activeExamCfg.subject;
     document.getElementById('examStudentNameHeader').innerText = window.examEngine.student?.name || 'Peserta';
     document.getElementById('currentQuestionNumberBadge').innerText = `Soal No. ${window.examEngine.currentQuestionIndex + 1} dari ${activeQs.length}`;
 
@@ -727,6 +912,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         optEl.addEventListener('click', () => {
           window.examEngine.selectSingleAnswer(opt.key);
+          window.examEngine.syncLiveStudentProgress(false);
           renderExamRoom();
           renderQuestionPalette();
         });
@@ -763,6 +949,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         optEl.addEventListener('click', () => {
           window.examEngine.toggleMultipleAnswer(opt.key);
+          window.examEngine.syncLiveStudentProgress(false);
           renderExamRoom();
           renderQuestionPalette();
         });
@@ -819,6 +1006,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const stmtId = btn.getAttribute('data-stmt');
           const value = btn.getAttribute('data-val');
           window.examEngine.selectTrueFalseAnswer(stmtId, value);
+          window.examEngine.syncLiveStudentProgress(false);
           renderExamRoom();
           renderQuestionPalette();
         });
@@ -980,6 +1168,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  window.addEventListener('cbt-privacy-shield', (e) => {
+    const reasonEl = document.getElementById('privacyShieldReason');
+    if (reasonEl && e.detail && e.detail.reason) {
+      reasonEl.innerText = e.detail.reason;
+    }
+    if (examPrivacyShield) examPrivacyShield.classList.remove('hidden');
+  });
+
   window.addEventListener('cbt-cheat-warning', (e) => {
     const { count, max, reason } = e.detail;
     const cheatCountBadge = document.getElementById('cheatCountBadge');
@@ -1001,6 +1197,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('cbt-exam-finished', (e) => {
     const { result } = e.detail;
+    if (examPrivacyShield) examPrivacyShield.classList.add('hidden');
+    if (modalCheatWarning) modalCheatWarning.classList.add('hidden');
     showView('result');
     document.getElementById('resStudentName').innerText = result.student?.name || '-';
     document.getElementById('resStudentNisn').innerText = result.student?.nisn || '-';
@@ -1086,15 +1284,35 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function stopMonitoringAutoRefresh() {
+    if (monitoringRefreshTimer) {
+      clearInterval(monitoringRefreshTimer);
+      monitoringRefreshTimer = null;
+    }
+  }
+
+  function startMonitoringAutoRefresh() {
+    stopMonitoringAutoRefresh();
+    monitoringRefreshTimer = setInterval(() => {
+      const tabMonitoringPane = document.getElementById('tabMonitoring');
+      if (viewAdmin && !viewAdmin.classList.contains('hidden') && tabMonitoringPane && !tabMonitoringPane.classList.contains('hidden')) {
+        renderMonitoringDashboard(true);
+      } else {
+        stopMonitoringAutoRefresh();
+      }
+    }, 10000);
+  }
+
   const btnAdminLogout = document.getElementById('btnAdminLogout');
   if (btnAdminLogout) {
     btnAdminLogout.addEventListener('click', () => {
+      stopMonitoringAutoRefresh();
       window.cbtAdmin.logout();
       showView('login');
     });
   }
 
-  // ===================== 6 ADMIN TABS SWITCHER & RBAC =====================
+  // ===================== 7 ADMIN TABS SWITCHER & RBAC =====================
   const adminTabButtons = document.querySelectorAll('.admin-tab-btn');
 
   function switchAdminTab(targetTab) {
@@ -1124,9 +1342,17 @@ document.addEventListener('DOMContentLoaded', () => {
       else pane.classList.add('hidden');
     });
 
+    if (targetTab !== 'tabMonitoring') {
+      stopMonitoringAutoRefresh();
+    }
+
     try {
       if (targetTab === 'tabResults') {
         renderAdminAnalyticsAndResults();
+      } else if (targetTab === 'tabMonitoring') {
+        setupMonitoringControls();
+        renderMonitoringDashboard(true);
+        startMonitoringAutoRefresh();
       } else if (targetTab === 'tabSchedules' && isAdmin) {
         renderAdminSchedulesList();
       } else if (targetTab === 'tabQuestions') {
@@ -1155,6 +1381,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAdminDashboard() {
     const currentTeacher = window.cbtAdmin ? window.cbtAdmin.getCurrentTeacher() : null;
+    const tabMonitoringBtn = document.getElementById('adminTabBtnMonitoring');
     const tabSchedulesBtn = document.getElementById('adminTabBtnSchedules');
     const tabStudentsBtn = document.getElementById('adminTabBtnStudents');
     const tabTeachersBtn = document.getElementById('adminTabBtnTeachers');
@@ -1182,9 +1409,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const parsedClasses = currentTeacher.classes && window.cbtAdmin ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes) : [];
         const classInfo = parsedClasses.length > 0 ? ` • Kelas: ${parsedClasses.join(', ')}` : '';
         subjDisp.innerText = isAdmin
-          ? `Mata Pelajaran: Semua Mapel • Status: Hak Akses Penuh (Super Admin)`
+          ? `Status: Hak Akses Penuh (Administrator Sistem)`
           : `Mata Pelajaran: ${currentTeacher.subject}${classInfo} • NIP: ${currentTeacher.nip}`;
       }
+
+      if (tabMonitoringBtn) tabMonitoringBtn.classList.remove('hidden');
 
       if (!isAdmin) {
         if (tabSchedulesBtn) tabSchedulesBtn.classList.add('hidden');
@@ -1195,7 +1424,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tabStudentsPane) tabStudentsPane.classList.add('hidden');
         if (tabTeachersPane) tabTeachersPane.classList.add('hidden');
         if (tabSettingsPane) tabSettingsPane.classList.add('hidden');
-        switchAdminTab('tabResults');
+        const savedTab = localStorage.getItem('cbt_active_admin_tab') || 'tabResults';
+        const allowedGuruTabs = ['tabResults', 'tabMonitoring', 'tabQuestions'];
+        switchAdminTab(allowedGuruTabs.includes(savedTab) ? savedTab : 'tabResults');
       } else {
         if (tabSchedulesBtn) tabSchedulesBtn.classList.remove('hidden');
         if (tabStudentsBtn) tabStudentsBtn.classList.remove('hidden');
@@ -1211,6 +1442,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupSubjectAndClassFilters();
     setupQuestionBankFilters();
+    setupMonitoringControls();
     renderAdminAnalyticsAndResults();
     renderAdminQuestionList();
 
@@ -1272,8 +1504,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const timeEl = document.getElementById('schInputTime');
     const durEl = document.getElementById('schInputDuration');
+    const attEl = document.getElementById('schInputMaxAttempts');
     if (timeEl) timeEl.value = '07:30 - 08:50';
     if (durEl) durEl.value = '80';
+    if (attEl) attEl.value = '1';
     if (titleEl) titleEl.innerText = '+ Tambah Jadwal Ujian';
     if (submitBtn) submitBtn.innerText = '💾 Simpan ke Daftar Jadwal';
     if (btnCancelEditSchedule) btnCancelEditSchedule.classList.add('hidden');
@@ -1288,6 +1522,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('schInputClass').value = sched.classLevel || '';
     document.getElementById('schInputTime').value = sched.timeRange || '07:30 - 08:50';
     document.getElementById('schInputDuration').value = sched.durationMinutes || 80;
+    const attEl = document.getElementById('schInputMaxAttempts');
+    if (attEl) attEl.value = sched.maxAttempts || 1;
     document.getElementById('schInputToken').value = sched.token || '';
 
     const titleEl = document.getElementById('scheduleFormTitle');
@@ -1299,6 +1535,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnCancelEditSchedule) {
     btnCancelEditSchedule.addEventListener('click', resetScheduleForm);
+  }
+
+  const btnDeactivateAllSchedules = document.getElementById('btnDeactivateAllSchedules');
+  if (btnDeactivateAllSchedules) {
+    btnDeactivateAllSchedules.addEventListener('click', () => {
+      if (!window.cbtAdmin || !window.cbtAdmin.isSuperAdminUser()) return;
+      if (confirm("Nonaktifkan seluruh jadwal mapel ujian yang sedang aktif saat ini?")) {
+        window.cbtAdmin.deactivateSchedule(null);
+        renderAdminSchedulesList();
+        renderConfigInfoOnLogin();
+        renderAdminConfigForm();
+      }
+    });
   }
 
   if (formScheduleItem) {
@@ -1317,6 +1566,7 @@ document.addEventListener('DOMContentLoaded', () => {
         classLevel: document.getElementById('schInputClass').value.trim(),
         timeRange: document.getElementById('schInputTime').value.trim(),
         durationMinutes: parseInt(document.getElementById('schInputDuration').value, 10) || 80,
+        maxAttempts: parseInt(document.getElementById('schInputMaxAttempts')?.value, 10) || 1,
         token: document.getElementById('schInputToken').value.trim().toUpperCase()
       };
 
@@ -1328,6 +1578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         resetScheduleForm();
         renderAdminSchedulesList();
         setupSubjectAndClassFilters();
+        setupMonitoringControls();
         renderConfigInfoOnLogin();
         renderAdminConfigForm();
       } else {
@@ -1341,17 +1592,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const tbody = document.getElementById('adminSchedulesTbody');
     const bannerTextEl = document.getElementById('activeScheduleBannerText');
+    const deactivateAllBtn = document.getElementById('btnDeactivateAllSchedules');
     const cfg = window.examEngine.config;
+    const activeSchedules = window.cbtAdmin.getActiveSchedules();
 
     populateScheduleSubjectDatalist();
 
     if (bannerTextEl) {
-      if (cfg.scheduleDay || cfg.scheduleDate) {
-        const classLabel = cfg.targetClass && cfg.targetClass !== 'Semua Kelas' ? ` (${cfg.targetClass})` : '';
-        bannerTextEl.innerText = `Mapel Aktif: ${cfg.subject}${classLabel} • ${[cfg.scheduleDay, cfg.scheduleDate].filter(Boolean).join(', ')} • Token: ${cfg.examToken}`;
+      if (activeSchedules.length > 1) {
+        const names = activeSchedules.map(s => `${s.subject} (${s.classLevel})`).join(', ');
+        bannerTextEl.innerText = `${activeSchedules.length} Mapel Aktif Serentak: ${names}`;
+      } else if (activeSchedules.length === 1) {
+        const s = activeSchedules[0];
+        const classLabel = s.classLevel && s.classLevel !== 'Semua Kelas' ? ` (${s.classLevel})` : '';
+        bannerTextEl.innerText = `Mapel Aktif: ${s.subject}${classLabel} • ${s.day}, ${s.dateFormatted || window.cbtAdmin.formatIndonesianDate(s.dateIso)} • Token: ${s.token}`;
       } else {
-        bannerTextEl.innerText = `Mapel Aktif: ${cfg.subject} (Mode Manual • Token: ${cfg.examToken})`;
+        bannerTextEl.innerText = `Belum Ada Jadwal Aktif (Mode Manual: ${cfg.subject} • Token: ${cfg.examToken})`;
       }
+    }
+
+    if (deactivateAllBtn) {
+      if (activeSchedules.length > 0) deactivateAllBtn.classList.remove('hidden');
+      else deactivateAllBtn.classList.add('hidden');
     }
 
     if (!tbody) return;
@@ -1364,7 +1626,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     schedules.forEach((s, idx) => {
-      const isActive = cfg.activeScheduleId === s.id;
+      const isActive = Boolean(s.isActive);
+      const maxAtt = window.examEngine ? window.examEngine.getMaxAttemptsForSubject(s.subject, s) : (s.maxAttempts || 1);
       const tr = document.createElement('tr');
       tr.className = `border-b border-slate-100 transition ${isActive ? 'bg-emerald-50/60' : 'hover:bg-slate-50'}`;
       tr.innerHTML = `
@@ -1377,6 +1640,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="font-bold text-slate-900">${s.subject}</div>
           <div class="flex flex-wrap items-center gap-1 mt-0.5">
             <span class="inline-block px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-[10px]">${s.classLevel}</span>
+            <span class="inline-block px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-bold text-[10px]">Maks ${maxAtt}x Uji</span>
             ${(() => {
               const qInfo = window.examEngine && window.examEngine.getQuestionsForExam
                 ? window.examEngine.getQuestionsForExam(s.subject, s.classLevel)
@@ -1418,7 +1682,8 @@ document.addEventListener('DOMContentLoaded', () => {
             renderConfigInfoOnLogin();
             renderAdminConfigForm();
             setupSubjectAndClassFilters();
-            alert(`Mapel "${s.subject}" (${s.classLevel}) untuk hari ${s.day}, ${s.dateFormatted} berhasil DIAKTIFKAN!\nToken Ujian Siswa: ${s.token}`);
+            const countNow = window.cbtAdmin.getActiveSchedules().length;
+            alert(`Mapel "${s.subject}" (${s.classLevel}) berhasil DIAKTIFKAN!\nToken Ujian: ${s.token}\nTotal mapel ujian aktif saat ini: ${countNow} mapel.`);
           } else {
             alert(res.message);
           }
@@ -1428,7 +1693,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const deactivateBtn = tr.querySelector('.btn-deactivate-schedule');
       if (deactivateBtn) {
         deactivateBtn.addEventListener('click', () => {
-          const res = window.cbtAdmin.deactivateSchedule();
+          const res = window.cbtAdmin.deactivateSchedule(s.id);
           if (res.success) {
             renderAdminSchedulesList();
             renderConfigInfoOnLogin();
@@ -1613,6 +1878,401 @@ document.addEventListener('DOMContentLoaded', () => {
         window.cbtAdmin.clearAllResults();
         renderAdminAnalyticsAndResults();
       }
+    });
+  }
+
+  // ===================== TAB PANTAU LOGIN SISWA & ATURAN PERCOBAAN =====================
+  function setupMonitoringControls() {
+    if (!window.cbtAdmin) return;
+    const currentTeacher = window.cbtAdmin.getCurrentTeacher();
+    const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
+    const teacherSubjects = window.cbtAdmin.getTeacherSubjectsList(currentTeacher);
+    const assignedClasses = (!isAdmin && currentTeacher && currentTeacher.classes)
+      ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes)
+      : [];
+
+    const ruleSubjEl = document.getElementById('attemptRuleSubject');
+    const ruleMaxEl = document.getElementById('attemptRuleMax');
+    const btnSaveRule = document.getElementById('btnSaveAttemptRule');
+    const monSubjEl = document.getElementById('filterMonitoringSubject');
+    const monClassEl = document.getElementById('filterMonitoringClass');
+    const monStatusEl = document.getElementById('filterMonitoringStatus');
+    const monSearchEl = document.getElementById('searchMonitoringInput');
+    const btnRefreshMon = document.getElementById('btnRefreshMonitoring');
+
+    const allSubjects = window.cbtAdmin.getAllSubjects();
+    const ownedSubjects = isAdmin
+      ? allSubjects
+      : (teacherSubjects.length > 0 ? teacherSubjects : (currentTeacher && currentTeacher.subject ? [currentTeacher.subject] : []));
+
+    if (ruleSubjEl) {
+      const prevRuleSub = ruleSubjEl.value;
+      ruleSubjEl.innerHTML = '';
+      ownedSubjects.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.innerText = s;
+        ruleSubjEl.appendChild(opt);
+      });
+      if (prevRuleSub && ownedSubjects.includes(prevRuleSub)) {
+        ruleSubjEl.value = prevRuleSub;
+      } else if (ownedSubjects.length > 0) {
+        ruleSubjEl.selectedIndex = 0;
+      }
+
+      const syncRuleMaxVal = () => {
+        if (!ruleMaxEl || !ruleSubjEl.value) return;
+        const matchedSch = window.cbtAdmin.schedules.find(s => String(s.subject || '').toLowerCase() === ruleSubjEl.value.toLowerCase());
+        ruleMaxEl.value = window.examEngine.getMaxAttemptsForSubject(ruleSubjEl.value, matchedSch);
+      };
+      syncRuleMaxVal();
+      ruleSubjEl.onchange = syncRuleMaxVal;
+    }
+
+    if (btnSaveRule) {
+      btnSaveRule.onclick = () => {
+        const subj = ruleSubjEl ? ruleSubjEl.value : '';
+        const maxVal = Math.max(1, Math.min(10, parseInt(ruleMaxEl ? ruleMaxEl.value : '1', 10) || 1));
+        if (!subj) return;
+        window.examEngine.setMaxAttemptsForSubject(subj, maxVal);
+        if (window.cbtAdmin.isSuperAdminUser()) {
+          let schChanged = false;
+          window.cbtAdmin.schedules = window.cbtAdmin.schedules.map(s => {
+            if (window.examEngine.matchesSubject(s.subject, subj)) {
+              schChanged = true;
+              return { ...s, maxAttempts: maxVal };
+            }
+            return s;
+          });
+          if (schChanged) window.cbtAdmin.saveSchedules(window.cbtAdmin.schedules);
+          renderAdminSchedulesList();
+        }
+        renderMonitoringDashboard(false);
+        alert(`Batas maksimal mengikuti ujian "${subj}" diatur menjadi ${maxVal} kali percobaan.\nSiswa yang sudah mencapai ${maxVal} kali akan ditolak otomatis oleh sistem.`);
+      };
+    }
+
+    if (monSubjEl) {
+      const prevMonSub = monSubjEl.value;
+      monSubjEl.innerHTML = isAdmin
+        ? '<option value="ALL">Semua Mata Pelajaran</option>'
+        : (ownedSubjects.length > 1 ? `<option value="ALL">Semua Mapel Diampu</option>` : '');
+      ownedSubjects.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.innerText = s;
+        monSubjEl.appendChild(opt);
+      });
+      if (prevMonSub && Array.from(monSubjEl.options).some(o => o.value === prevMonSub)) {
+        monSubjEl.value = prevMonSub;
+      } else if (!isAdmin && ownedSubjects.length === 1) {
+        monSubjEl.value = ownedSubjects[0];
+      }
+      monSubjEl.onchange = () => renderMonitoringDashboard(false);
+    }
+
+    if (monClassEl) {
+      const prevMonCls = monClassEl.value;
+      const studentClasses = window.studentManager ? window.studentManager.getAllClasses() : [];
+      const classesToShow = assignedClasses.length > 0
+        ? Array.from(new Set([...assignedClasses, ...studentClasses.filter(c => assignedClasses.some(ac => String(c).toUpperCase().startsWith(ac)))])).sort()
+        : studentClasses;
+
+      monClassEl.innerHTML = assignedClasses.length > 0
+        ? `<option value="ALL">Kelas Diampu (${assignedClasses.join(', ')})</option>`
+        : '<option value="ALL">Semua Kelas</option>';
+      classesToShow.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.innerText = `Kelas ${c}`;
+        monClassEl.appendChild(opt);
+      });
+      if (prevMonCls && Array.from(monClassEl.options).some(o => o.value === prevMonCls)) {
+        monClassEl.value = prevMonCls;
+      } else {
+        monClassEl.value = 'ALL';
+      }
+      monClassEl.onchange = () => renderMonitoringDashboard(false);
+    }
+
+    if (monStatusEl) monStatusEl.onchange = () => renderMonitoringDashboard(false);
+    if (monSearchEl) monSearchEl.oninput = () => renderMonitoringDashboard(false);
+
+    if (btnRefreshMon) {
+      btnRefreshMon.onclick = async () => {
+        btnRefreshMon.disabled = true;
+        btnRefreshMon.innerText = 'Menyegarkan...';
+        await renderMonitoringDashboard(true);
+        btnRefreshMon.disabled = false;
+        btnRefreshMon.innerText = '🔄 Refresh Pantauan';
+      };
+    }
+  }
+
+  async function renderMonitoringDashboard(pullCloud = false) {
+    const tbody = document.getElementById('adminMonitoringTbody');
+    const emptyEl = document.getElementById('adminMonitoringEmpty');
+    if (!tbody || !window.cbtAdmin) return;
+
+    const currentTeacher = window.cbtAdmin.getCurrentTeacher();
+    const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
+    const teacherSubjects = window.cbtAdmin.getTeacherSubjectsList(currentTeacher);
+    const assignedClasses = (!isAdmin && currentTeacher && currentTeacher.classes)
+      ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes)
+      : [];
+
+    if (pullCloud && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+      const [sessRes] = await Promise.all([
+        window.supabaseSync.fetchStudentSessions(),
+        window.supabaseSync.fetchCloudResults()
+      ]);
+      if (sessRes && Array.isArray(sessRes.data)) {
+        cachedMonitoringSessions = sessRes.data;
+      }
+    } else if (window.supabaseSync) {
+      const localS = window.supabaseSync.getLocalStudentSessions();
+      if (localS.length > 0 || cachedMonitoringSessions.length === 0) {
+        const mergedMap = new Map();
+        cachedMonitoringSessions.forEach(s => mergedMap.set(window.supabaseSync.buildSessionKey(s.nisn, s.subject), s));
+        localS.forEach(s => mergedMap.set(window.supabaseSync.buildSessionKey(s.nisn, s.subject), s));
+        cachedMonitoringSessions = Array.from(mergedMap.values());
+      }
+    }
+
+    const subjFilter = document.getElementById('filterMonitoringSubject')?.value || 'ALL';
+    const classFilter = document.getElementById('filterMonitoringClass')?.value || 'ALL';
+    const statusFilter = document.getElementById('filterMonitoringStatus')?.value || 'ACTIVE';
+    const searchQ = (document.getElementById('searchMonitoringInput')?.value || '').trim().toLowerCase();
+
+    let allResults = [];
+    try {
+      allResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+      if (!Array.isArray(allResults)) allResults = [];
+    } catch (e) {
+      allResults = [];
+    }
+
+    const attemptsMap = new Map();
+    const latestResultMap = new Map();
+    allResults.forEach(r => {
+      const nisn = String(r.student?.nisn || r.student_nisn || '').trim().toUpperCase();
+      const sub = String(r.subject || '').trim();
+      if (!nisn || !sub) return;
+      const key = `${nisn}__${sub.toLowerCase()}`;
+      attemptsMap.set(key, (attemptsMap.get(key) || 0) + 1);
+      if (!latestResultMap.has(key)) latestResultMap.set(key, r);
+    });
+
+    const rowMap = new Map();
+    cachedMonitoringSessions.forEach(s => {
+      const nisn = String(s.nisn || '').trim().toUpperCase();
+      const sub = String(s.subject || '').trim();
+      if (!nisn || !sub) return;
+      const key = `${nisn}__${sub.toLowerCase()}`;
+      const attCount = attemptsMap.get(key) || 0;
+      rowMap.set(key, {
+        nisn,
+        name: s.name || '-',
+        class: s.class || '-',
+        subject: sub,
+        status: s.status || 'logged_in',
+        attemptNumber: s.attemptNumber || Math.max(1, attCount),
+        attemptsCompleted: attCount,
+        answeredCount: s.answeredCount || 0,
+        totalQuestions: s.totalQuestions || 0,
+        remainingSeconds: s.remainingSeconds || 0,
+        cheatCount: s.cheatCount || 0,
+        finalScore: s.finalScore,
+        updatedAt: s.updatedAt || s.completedAt || s.startedAt || s.loginAt || ''
+      });
+    });
+
+    latestResultMap.forEach((r, key) => {
+      const existing = rowMap.get(key);
+      const attCount = attemptsMap.get(key) || 1;
+      if (!existing || (existing.status !== 'logged_in' && existing.status !== 'in_progress')) {
+        rowMap.set(key, {
+          nisn: String(r.student?.nisn || r.student_nisn || '').trim().toUpperCase(),
+          name: r.student?.name || '-',
+          class: r.student?.class || '-',
+          subject: r.subject || '-',
+          status: 'completed',
+          attemptNumber: attCount,
+          attemptsCompleted: attCount,
+          answeredCount: (r.totalQuestions || 0) - (r.unattemptedCount || 0),
+          totalQuestions: r.totalQuestions || 0,
+          remainingSeconds: 0,
+          cheatCount: r.cheatCount || 0,
+          finalScore: r.finalScore,
+          updatedAt: r.completedAt || ''
+        });
+      } else {
+        existing.attemptsCompleted = attCount;
+      }
+    });
+
+    const activeSchedules = window.cbtAdmin.getActiveSchedules();
+    const defaultSubject = subjFilter !== 'ALL'
+      ? subjFilter
+      : (activeSchedules.length === 1
+        ? activeSchedules[0].subject
+        : (!isAdmin && teacherSubjects.length > 0 ? teacherSubjects[0] : (window.examEngine.config.subject || 'Umum')));
+
+    const allStudents = window.studentManager ? window.studentManager.getAllStudents() : [];
+    const nisnWithActivityForScope = new Set();
+    rowMap.forEach(row => {
+      if (subjFilter === 'ALL' || window.examEngine.matchesSubject(row.subject, subjFilter)) {
+        nisnWithActivityForScope.add(row.nisn);
+      }
+    });
+
+    allStudents.forEach(stu => {
+      const stuNisn = String(stu.nisn || '').trim().toUpperCase();
+      if (!stuNisn || nisnWithActivityForScope.has(stuNisn)) return;
+      const syntheticKey = `${stuNisn}__${String(defaultSubject).toLowerCase()}__none`;
+      rowMap.set(syntheticKey, {
+        nisn: stuNisn,
+        name: stu.name || '-',
+        class: stu.class || '-',
+        subject: defaultSubject,
+        status: 'not_logged_in',
+        attemptNumber: 0,
+        attemptsCompleted: 0,
+        answeredCount: 0,
+        totalQuestions: 0,
+        remainingSeconds: 0,
+        cheatCount: 0,
+        updatedAt: ''
+      });
+    });
+
+    const scopedRows = Array.from(rowMap.values()).filter(row => {
+      if (!isAdmin) {
+        const subOk = teacherSubjects.length === 0 || teacherSubjects.some(ts => window.examEngine.matchesSubject(row.subject, ts));
+        if (!subOk) return false;
+        if (assignedClasses.length > 0) {
+          const stuCls = String(row.class || '').trim().toUpperCase();
+          if (!assignedClasses.some(ac => stuCls === ac || stuCls.startsWith(ac))) return false;
+        }
+      }
+      if (subjFilter !== 'ALL' && !window.examEngine.matchesSubject(row.subject, subjFilter)) return false;
+      if (classFilter !== 'ALL' && String(row.class || '').trim().toUpperCase() !== String(classFilter).trim().toUpperCase()) return false;
+      return true;
+    });
+
+    const kpiLoggedIn = scopedRows.filter(r => r.status === 'logged_in').length;
+    const kpiInProgress = scopedRows.filter(r => r.status === 'in_progress').length;
+    const kpiCompleted = scopedRows.filter(r => r.status === 'completed').length;
+    const kpiNotLoggedIn = scopedRows.filter(r => r.status === 'not_logged_in').length;
+
+    const k1 = document.getElementById('monKpiLoggedIn');
+    const k2 = document.getElementById('monKpiInProgress');
+    const k3 = document.getElementById('monKpiCompleted');
+    const k4 = document.getElementById('monKpiNotLoggedIn');
+    if (k1) k1.innerText = kpiLoggedIn;
+    if (k2) k2.innerText = kpiInProgress;
+    if (k3) k3.innerText = kpiCompleted;
+    if (k4) k4.innerText = kpiNotLoggedIn;
+
+    let displayRows = scopedRows.filter(r => {
+      if (statusFilter === 'ACTIVE') return r.status !== 'not_logged_in';
+      if (statusFilter !== 'ALL') return r.status === statusFilter;
+      return true;
+    });
+
+    if (searchQ) {
+      displayRows = displayRows.filter(r =>
+        (r.name && r.name.toLowerCase().includes(searchQ)) ||
+        (r.nisn && r.nisn.toLowerCase().includes(searchQ)) ||
+        (r.class && r.class.toLowerCase().includes(searchQ))
+      );
+    }
+
+    const statusPriority = { in_progress: 1, logged_in: 2, completed: 3, not_logged_in: 4 };
+    displayRows.sort((a, b) => {
+      const pDiff = (statusPriority[a.status] || 9) - (statusPriority[b.status] || 9);
+      if (pDiff !== 0) return pDiff;
+      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    });
+
+    tbody.innerHTML = '';
+    if (displayRows.length === 0) {
+      if (emptyEl) emptyEl.classList.remove('hidden');
+      return;
+    }
+    if (emptyEl) emptyEl.classList.add('hidden');
+
+    displayRows.forEach((r, idx) => {
+      const matchedSch = window.cbtAdmin.schedules.find(s => window.examEngine.matchesSubject(s.subject, r.subject));
+      const maxAtt = window.examEngine.getMaxAttemptsForSubject(r.subject, matchedSch);
+      let badgeHtml = `<span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px]">⏳ Belum Login</span>`;
+      if (r.status === 'logged_in') {
+        badgeHtml = `<span class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-bold text-[10px]">🔑 Sedang Login</span>`;
+      } else if (r.status === 'in_progress') {
+        badgeHtml = `<span class="px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-200 font-bold text-[10px] inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></span>✍️ Sedang Mengerjakan</span>`;
+      } else if (r.status === 'completed') {
+        badgeHtml = `<span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-[10px]">✅ Sudah Selesai</span>`;
+      }
+
+      const progressText = r.status === 'not_logged_in'
+        ? `<span class="text-slate-400">0/${maxAtt}x</span>`
+        : `<div class="font-bold text-slate-800">${r.answeredCount}/${r.totalQuestions || '-'} Soal</div><div class="text-[10px] text-slate-500">Percobaan ${Math.max(1, r.attemptsCompleted || r.attemptNumber)} / Maks ${maxAtt}x</div>`;
+
+      const timeStr = r.remainingSeconds > 0 ? window.examEngine.formatTime(r.remainingSeconds) : '-';
+      const cheatHtml = (r.cheatCount || 0) > 0
+        ? `<span class="text-red-600 font-bold">${r.cheatCount}x Curang</span>`
+        : `<span class="text-emerald-600 font-medium">0 Pelanggaran</span>`;
+
+      let lastActDisplay = '-';
+      if (r.updatedAt) {
+        const parsedDt = new Date(r.updatedAt);
+        lastActDisplay = isNaN(parsedDt.getTime()) ? r.updatedAt : parsedDt.toLocaleString('id-ID');
+      }
+
+      const tr = document.createElement('tr');
+      tr.className = "border-b border-slate-100 hover:bg-slate-50 transition";
+      tr.innerHTML = `
+        <td class="p-3 text-center text-slate-400 font-bold">${idx + 1}</td>
+        <td class="p-3">
+          <div class="font-bold text-slate-900">${r.name}</div>
+          <div class="font-mono text-[11px] text-slate-500">${r.nisn}</div>
+        </td>
+        <td class="p-3 whitespace-nowrap">
+          <span class="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-[11px]">Kelas ${r.class}</span>
+        </td>
+        <td class="p-3 font-semibold text-slate-700">${r.subject}</td>
+        <td class="p-3 text-center whitespace-nowrap">${badgeHtml}</td>
+        <td class="p-3 text-center whitespace-nowrap">${progressText}</td>
+        <td class="p-3 text-center whitespace-nowrap">
+          <div class="font-mono font-bold text-slate-700">${r.status === 'in_progress' ? timeStr : '-'}</div>
+          <div class="text-[10px]">${r.status !== 'not_logged_in' ? cheatHtml : '-'}</div>
+        </td>
+        <td class="p-3 text-[11px] text-slate-500 whitespace-nowrap">${lastActDisplay}</td>
+        <td class="p-3 text-center whitespace-nowrap">
+          ${r.status !== 'not_logged_in'
+            ? `<button type="button" class="btn-reset-student-attempt px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-[11px] cursor-pointer transition" title="Hapus riwayat selesai agar siswa bisa ujian ulang">🔄 Izinkan Ulang</button>`
+            : `<span class="text-[10px] text-slate-400">—</span>`
+          }
+        </td>
+      `;
+
+      const resetBtn = tr.querySelector('.btn-reset-student-attempt');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', async () => {
+          if (confirm(`Izinkan siswa "${r.name}" (${r.nisn}) mengulang ujian "${r.subject}"?\nRiwayat selesai sebelumnya untuk mapel ini akan direset.`)) {
+            resetBtn.disabled = true;
+            resetBtn.innerText = 'Mereset...';
+            await window.cbtAdmin.resetStudentAttempts(r.nisn, r.subject);
+            cachedMonitoringSessions = cachedMonitoringSessions.filter(s =>
+              !(String(s.nisn || '').trim().toUpperCase() === r.nisn && window.examEngine.matchesSubject(s.subject, r.subject))
+            );
+            await renderMonitoringDashboard(false);
+            renderAdminAnalyticsAndResults();
+          }
+        });
+      }
+
+      tbody.appendChild(tr);
     });
   }
 
@@ -2652,6 +3312,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('cfgDurationMinutes').value = config.durationMinutes || 80;
     document.getElementById('cfgExamToken').value = config.examToken || 'CBT80M';
     document.getElementById('cfgMaxCheats').value = config.maxCheatViolations || 3;
+    const maxAttEl = document.getElementById('cfgMaxAttempts');
+    if (maxAttEl) maxAttEl.value = config.maxAttempts || 1;
 
     const currentTeacher = window.cbtAdmin.getCurrentTeacher();
     document.getElementById('cfgAdminPin').value = currentTeacher ? currentTeacher.pin : 'admin123';
@@ -2667,7 +3329,8 @@ document.addEventListener('DOMContentLoaded', () => {
         durationMinutes: parseInt(document.getElementById('cfgDurationMinutes').value) || 80,
         examToken: document.getElementById('cfgExamToken').value.trim().toUpperCase(),
         showScoreToStudent: false,
-        maxCheatViolations: parseInt(document.getElementById('cfgMaxCheats').value) || 3
+        maxCheatViolations: parseInt(document.getElementById('cfgMaxCheats').value) || 3,
+        maxAttempts: Math.max(1, Math.min(10, parseInt(document.getElementById('cfgMaxAttempts')?.value, 10) || 1))
       };
 
       const currentTeacher = window.cbtAdmin.getCurrentTeacher();
@@ -2758,12 +3421,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const text = document.getElementById('cloudStatusText');
     if (!badge || !window.supabaseSync) return;
 
+    const isAdminVisible = Boolean(viewAdmin && !viewAdmin.classList.contains('hidden'));
+    if (!isAdminVisible) {
+      badge.className = "hidden";
+      return;
+    }
+
     if (window.supabaseSync.isCloudConfigured()) {
-      badge.className = "hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300";
+      badge.className = "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300";
       if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
       if (text) text.innerText = "Cloud Online";
     } else {
-      badge.className = "hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200";
+      badge.className = "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200";
       if (dot) dot.className = "w-2 h-2 rounded-full bg-slate-400";
       if (text) text.innerText = "Mode Lokal";
     }

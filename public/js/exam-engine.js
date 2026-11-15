@@ -5,6 +5,11 @@ class ExamEngine {
     this.config = this.loadConfig();
     this.questions = this.loadQuestions();
     this.activeQuestions = null;
+    this.activeExamConfig = null;
+    this.attemptNumber = 1;
+    this.startedAtIso = null;
+    this.lastHeartbeatAt = 0;
+    this.wakeLock = null;
     this.currentQuestionIndex = 0;
     this.student = null;
     this.answers = {};
@@ -18,6 +23,81 @@ class ExamEngine {
 
     this.audioCtx = null;
     this.initSecurity();
+  }
+
+  getActiveExamConfig() {
+    return {
+      ...this.config,
+      ...(this.activeExamConfig || {})
+    };
+  }
+
+  getMaxAttemptsForSubject(subject, scheduleObj = null) {
+    const cleanSub = String(subject || '').trim().toLowerCase();
+    const map = (this.config && this.config.subjectMaxAttempts && typeof this.config.subjectMaxAttempts === 'object')
+      ? this.config.subjectMaxAttempts
+      : {};
+
+    for (const [k, v] of Object.entries(map)) {
+      if (String(k).trim().toLowerCase() === cleanSub) {
+        const parsed = parseInt(v, 10);
+        if (parsed >= 1) return parsed;
+      }
+    }
+
+    if (scheduleObj && parseInt(scheduleObj.maxAttempts, 10) >= 1) {
+      return parseInt(scheduleObj.maxAttempts, 10);
+    }
+
+    return Math.max(1, parseInt(this.config?.maxAttempts, 10) || 1);
+  }
+
+  setMaxAttemptsForSubject(subject, maxAttempts, skipCloudPush = false) {
+    const cleanSub = String(subject || '').trim();
+    const val = Math.max(1, Math.min(20, parseInt(maxAttempts, 10) || 1));
+    if (!cleanSub) return;
+    const nextMap = {
+      ...(this.config.subjectMaxAttempts || {}),
+      [cleanSub]: val
+    };
+    this.saveConfig({ subjectMaxAttempts: nextMap }, skipCloudPush);
+  }
+
+  async getStudentAttemptStats(nisn, subject) {
+    const targetNisn = String(nisn || '').trim().toUpperCase();
+    const targetSub = String(subject || '').trim().toLowerCase();
+    if (!targetNisn || !targetSub) return { count: 0, records: [] };
+
+    let localResults = [];
+    try {
+      localResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+      if (!Array.isArray(localResults)) localResults = [];
+    } catch (e) {
+      localResults = [];
+    }
+
+    let cloudResults = [];
+    if (typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+      cloudResults = await window.supabaseSync.fetchStudentAttemptsFromCloud(targetNisn);
+    }
+
+    const combined = [...cloudResults, ...localResults];
+    const deduped = new Map();
+    combined.forEach(r => {
+      if (!r) return;
+      const rNisn = String(r.student?.nisn || r.student_nisn || '').trim().toUpperCase();
+      const rSub = String(r.subject || '').trim().toLowerCase();
+      if (rNisn !== targetNisn) return;
+      if (!(rSub === targetSub || this.matchesSubject(rSub, targetSub))) return;
+
+      const sig = r.id ? String(r.id) : `${rNisn}__${rSub}__${r.completedAt || r.completed_at || ''}`;
+      if (!deduped.has(sig)) {
+        deduped.set(sig, r);
+      }
+    });
+
+    const records = Array.from(deduped.values());
+    return { count: records.length, records };
   }
 
   loadConfig() {
@@ -155,17 +235,65 @@ class ExamEngine {
     return null;
   }
 
-  startExam(studentData) {
+  async acquireScreenLock() {
+    document.body.classList.add('exam-locked');
+    try {
+      if ('wakeLock' in navigator && !this.wakeLock) {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch (e) {}
+  }
+
+  releaseScreenLock() {
+    document.body.classList.remove('exam-locked');
+    try {
+      if (this.wakeLock) {
+        this.wakeLock.release().catch(() => {});
+        this.wakeLock = null;
+      }
+    } catch (e) {}
+  }
+
+  syncLiveStudentProgress(force = false) {
+    if (!this.isExamActive || !this.student || typeof window === 'undefined' || !window.supabaseSync) return;
+    const now = Date.now();
+    if (!force && now - this.lastHeartbeatAt < 15000) return;
+    this.lastHeartbeatAt = now;
+
+    const activeCfg = this.getActiveExamConfig();
+    const summary = this.getAnswerSummary();
+    window.supabaseSync.upsertStudentSession({
+      nisn: this.student.nisn,
+      name: this.student.name,
+      class: this.student.class,
+      subject: activeCfg.subject,
+      status: 'in_progress',
+      attemptNumber: this.attemptNumber || 1,
+      answeredCount: summary.answered + summary.doubt,
+      totalQuestions: summary.total,
+      remainingSeconds: this.remainingSeconds,
+      cheatCount: this.cheatCount,
+      startedAt: this.startedAtIso || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  startExam(studentData, examOverride = null) {
     this.student = studentData;
+    this.activeExamConfig = examOverride ? { ...examOverride } : (studentData && studentData.examConfig ? { ...studentData.examConfig } : null);
+    this.attemptNumber = (studentData && parseInt(studentData.attemptNumber, 10)) || 1;
+    this.startedAtIso = new Date().toISOString();
     this.answers = {};
     this.currentQuestionIndex = 0;
     this.cheatCount = 0;
     this.cheatLogs = [];
     this.isExamActive = true;
-    this.remainingSeconds = (this.config.durationMinutes || 80) * 60;
 
-    const targetClass = (studentData && studentData.class) || this.config.targetClass || 'Semua Kelas';
-    const examQResult = this.getQuestionsForExam(this.config.subject, targetClass);
+    const activeCfg = this.getActiveExamConfig();
+    this.remainingSeconds = (activeCfg.durationMinutes || 80) * 60;
+
+    const targetClass = (studentData && studentData.class) || activeCfg.targetClass || 'Semua Kelas';
+    const examQResult = this.getQuestionsForExam(activeCfg.subject, targetClass);
     this.activeQuestions = examQResult.questions;
 
     this.activeQuestions.forEach(q => {
@@ -179,17 +307,23 @@ class ExamEngine {
       }
     });
 
+    this.acquireScreenLock();
     this.saveSession();
+    this.syncLiveStudentProgress(true);
     this.startTimer();
   }
 
   resumeSession(sessionData) {
     this.student = sessionData.student;
+    this.activeExamConfig = sessionData.activeExamConfig || (sessionData.student && sessionData.student.examConfig) || null;
+    this.attemptNumber = sessionData.attemptNumber || (sessionData.student && sessionData.student.attemptNumber) || 1;
+    this.startedAtIso = sessionData.startedAtIso || new Date().toISOString();
     this.answers = sessionData.answers || {};
     this.currentQuestionIndex = sessionData.currentQuestionIndex || 0;
     this.cheatCount = sessionData.cheatCount || 0;
     this.cheatLogs = sessionData.cheatLogs || [];
-    this.remainingSeconds = sessionData.remainingSeconds || (this.config.durationMinutes * 60);
+    const activeCfg = this.getActiveExamConfig();
+    this.remainingSeconds = sessionData.remainingSeconds || ((activeCfg.durationMinutes || 80) * 60);
     this.isExamActive = true;
 
     if (Array.isArray(sessionData.activeQuestionIds) && sessionData.activeQuestionIds.length > 0) {
@@ -198,11 +332,13 @@ class ExamEngine {
         .filter(Boolean);
       this.activeQuestions = restored.length > 0
         ? restored
-        : this.getQuestionsForExam(this.config.subject, this.student && this.student.class).questions;
+        : this.getQuestionsForExam(activeCfg.subject, this.student && this.student.class).questions;
     } else {
-      this.activeQuestions = this.getQuestionsForExam(this.config.subject, this.student && this.student.class).questions;
+      this.activeQuestions = this.getQuestionsForExam(activeCfg.subject, this.student && this.student.class).questions;
     }
 
+    this.acquireScreenLock();
+    this.syncLiveStudentProgress(true);
     this.startTimer();
   }
 
@@ -210,6 +346,9 @@ class ExamEngine {
     if (!this.isExamActive) return;
     const sessionData = {
       student: this.student,
+      activeExamConfig: this.activeExamConfig,
+      attemptNumber: this.attemptNumber,
+      startedAtIso: this.startedAtIso,
       answers: this.answers,
       currentQuestionIndex: this.currentQuestionIndex,
       activeQuestionIds: this.getExamQuestions().map(q => q.id),
@@ -224,6 +363,8 @@ class ExamEngine {
   clearSession() {
     this.isExamActive = false;
     this.activeQuestions = null;
+    this.activeExamConfig = null;
+    this.releaseScreenLock();
     if (this.timerInterval) clearInterval(this.timerInterval);
     localStorage.removeItem('cbt_active_session');
   }
@@ -234,6 +375,9 @@ class ExamEngine {
       if (this.remainingSeconds > 0) {
         this.remainingSeconds--;
         this.saveSession();
+        if (this.remainingSeconds % 20 === 0) {
+          this.syncLiveStudentProgress(true);
+        }
         window.dispatchEvent(new CustomEvent('cbt-timer-tick', {
           detail: { remainingSeconds: this.remainingSeconds }
         }));
@@ -421,13 +565,44 @@ class ExamEngine {
     } catch (e) {}
   }
 
+  triggerPrivacyShield(reason) {
+    if (!this.isExamActive) return;
+    window.dispatchEvent(new CustomEvent('cbt-privacy-shield', {
+      detail: { reason: reason || 'Layar dikunci untuk mencegah tangkapan layar atau perpindahan aplikasi.' }
+    }));
+  }
+
   initSecurity() {
     document.addEventListener('contextmenu', (e) => {
       if (this.isExamActive) e.preventDefault();
     });
 
-    document.addEventListener('keydown', (e) => {
+    ['copy', 'cut', 'dragstart'].forEach((evt) => {
+      document.addEventListener(evt, (e) => {
+        if (this.isExamActive) e.preventDefault();
+      });
+    });
+
+    const handleBlockedKeys = (e) => {
       if (!this.isExamActive) return;
+
+      const isPrintScreen = e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44;
+      const isOsScreenshot =
+        (e.metaKey && e.shiftKey && ['S', 's', '3', '4', '5'].includes(e.key)) ||
+        (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) ||
+        (e.ctrlKey && (e.key === 'p' || e.key === 'P'));
+
+      if (isPrintScreen || isOsScreenshot) {
+        e.preventDefault();
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('').catch(() => {});
+          }
+        } catch (err) {}
+        this.triggerPrivacyShield('Tangkapan layar / pencetakan layar diblokir selama ujian berlangsung!');
+        this.recordViolation('Terdeteksi percobaan tangkapan layar / print layar!');
+        return;
+      }
 
       if (
         e.key === 'F12' ||
@@ -438,25 +613,38 @@ class ExamEngine {
         this.recordViolation('Mencoba membuka inspect element / devtools');
       }
 
-      if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V')) {
+      if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || e.key === 'x' || e.key === 'X')) {
         e.preventDefault();
+      }
+    };
+
+    document.addEventListener('keydown', handleBlockedKeys);
+    document.addEventListener('keyup', (e) => {
+      if (!this.isExamActive) return;
+      if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
+        handleBlockedKeys(e);
       }
     });
 
     document.addEventListener('visibilitychange', () => {
       if (this.isExamActive && document.hidden) {
+        this.triggerPrivacyShield('Layar soal disembunyikan karena Anda meninggalkan layar ujian.');
         this.recordViolation('Terdeteksi berpindah tab atau meminimalkan browser!');
+      } else if (this.isExamActive && !document.hidden) {
+        this.acquireScreenLock();
       }
     });
 
     window.addEventListener('blur', () => {
       if (this.isExamActive && !document.hidden) {
+        this.triggerPrivacyShield('Layar soal dikunci sementara karena fokus layar berpindah / percobaan tangkapan layar.');
         this.recordViolation('Terdeteksi keluar dari fokus layar ujian!');
       }
     });
 
     document.addEventListener('fullscreenchange', () => {
       if (this.isExamActive && !document.fullscreenElement) {
+        this.triggerPrivacyShield('Ujian wajib berjalan dalam mode Layar Penuh (Fullscreen).');
         this.recordViolation('Keluar dari mode Layar Penuh (Fullscreen)!');
       }
     });
@@ -606,13 +794,16 @@ class ExamEngine {
       ? Math.round((totalPointsEarned / maxPossiblePoints) * 100)
       : 0;
 
+    const activeCfg = this.getActiveExamConfig();
+    const completedAtStr = new Date().toLocaleString('id-ID');
     const resultRecord = {
       id: 'RES_' + Date.now(),
       student: this.student,
-      examTitle: this.config.examTitle,
-      subject: this.config.subject,
-      completedAt: new Date().toLocaleString('id-ID'),
-      durationUsedSeconds: (this.config.durationMinutes * 60) - this.remainingSeconds,
+      examTitle: activeCfg.examTitle,
+      subject: activeCfg.subject,
+      attemptNumber: this.attemptNumber || 1,
+      completedAt: completedAtStr,
+      durationUsedSeconds: ((activeCfg.durationMinutes || 80) * 60) - this.remainingSeconds,
       correctCount,
       incorrectCount,
       unattemptedCount,
@@ -630,6 +821,22 @@ class ExamEngine {
 
     if (typeof window.supabaseSync !== 'undefined') {
       window.supabaseSync.submitExamResult(resultRecord);
+      window.supabaseSync.upsertStudentSession({
+        nisn: this.student?.nisn,
+        name: this.student?.name,
+        class: this.student?.class,
+        subject: activeCfg.subject,
+        status: 'completed',
+        attemptNumber: this.attemptNumber || 1,
+        answeredCount: activeQs.length - unattemptedCount,
+        totalQuestions: activeQs.length,
+        remainingSeconds: this.remainingSeconds,
+        cheatCount: this.cheatCount,
+        finalScore: finalScore,
+        startedAt: this.startedAtIso,
+        completedAt: completedAtStr,
+        updatedAt: new Date().toISOString()
+      });
     }
 
     this.clearSession();

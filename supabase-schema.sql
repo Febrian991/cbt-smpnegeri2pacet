@@ -39,3 +39,27 @@ ALTER TABLE cbt_school_state ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all on school state" ON cbt_school_state FOR ALL USING (true) WITH CHECK (true);
 
+-- Tabel pemantauan status login, sedang mengerjakan & selesai siswa secara real-time
+CREATE TABLE IF NOT EXISTS cbt_student_sessions (
+  session_key TEXT PRIMARY KEY,
+  student_nisn TEXT NOT NULL,
+  student_name TEXT NOT NULL,
+  student_class TEXT DEFAULT 'Umum',
+  subject TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'logged_in',
+  attempt_number INTEGER DEFAULT 1,
+  answered_count INTEGER DEFAULT 0,
+  total_questions INTEGER DEFAULT 0,
+  remaining_seconds INTEGER DEFAULT 0,
+  cheat_count INTEGER DEFAULT 0,
+  final_score INTEGER,
+  login_at TIMESTAMPTZ DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  raw_data JSONB
+);
+
+ALTER TABLE cbt_student_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow public all on student sessions" ON cbt_student_sessions FOR ALL USING (true) WITH CHECK (true);
