@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupStudentNisnDetection();
     setupSubjectAndClassFilters();
     setupMonitoringControls();
+    setupDarkMode();
     setupLoginPortalControls();
     setupAdminLoginHelpers();
     updateCloudBadge();
@@ -406,6 +407,50 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ===================== DARK MODE (MODE GELAP NYAMAN DI MATA) =====================
+  function applyDarkModeState(isDark) {
+    const htmlEl = document.documentElement;
+    if (isDark) htmlEl.classList.add('dark');
+    else htmlEl.classList.remove('dark');
+
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) themeMeta.setAttribute('content', isDark ? '#0f172a' : '#2563eb');
+
+    const sunSvg = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>';
+    const moonSvg = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>';
+
+    const iconHeader = document.getElementById('darkModeIconHeader');
+    const labelHeader = document.getElementById('darkModeLabelHeader');
+    const iconLogin = document.getElementById('darkModeIconLogin');
+    const labelLogin = document.getElementById('darkModeLabelLogin');
+
+    if (iconHeader) iconHeader.innerHTML = isDark ? sunSvg : moonSvg;
+    if (labelHeader) labelHeader.innerText = isDark ? 'Mode Terang' : 'Mode Gelap';
+    if (iconLogin) iconLogin.innerHTML = isDark ? sunSvg : moonSvg;
+    if (labelLogin) labelLogin.innerText = isDark ? 'Terang' : 'Gelap';
+  }
+
+  function setupDarkMode() {
+    let isDark = false;
+    try {
+      isDark = localStorage.getItem('cbt_dark_mode') === 'dark';
+    } catch (e) {}
+    applyDarkModeState(isDark);
+
+    const toggleTheme = () => {
+      const nextDark = !document.documentElement.classList.contains('dark');
+      try {
+        localStorage.setItem('cbt_dark_mode', nextDark ? 'dark' : 'light');
+      } catch (e) {}
+      applyDarkModeState(nextDark);
+    };
+
+    const btnHeader = document.getElementById('btnDarkModeHeader');
+    const btnLogin = document.getElementById('btnDarkModeLogin');
+    if (btnHeader) btnHeader.addEventListener('click', toggleTheme);
+    if (btnLogin) btnLogin.addEventListener('click', toggleTheme);
+  }
+
   // ===================== SHORTCUT KEYBOARD =====================
   function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
@@ -497,7 +542,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showInlineAdminBanner('');
 
     const activeCls = 'py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer bg-[#0066eb] text-white shadow-md shadow-blue-600/20';
-    const inactiveCls = 'py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer text-slate-600 hover:text-slate-900';
+    const inactiveCls = 'py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white';
 
     if (role === 'admin') {
       if (tabAdmin) tabAdmin.className = activeCls;
@@ -619,29 +664,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateLoginDisplayForSchedule(sched) {
-    const subtitleEl = document.getElementById('loginExamSubtitle');
     const tokenHintEl = document.getElementById('loginTokenHint');
     const scheduleBadgeEl = document.getElementById('loginScheduleBadge');
     const scheduleTextEl = document.getElementById('loginScheduleText');
     const cfg = window.examEngine.config;
 
-    const targetSubject = sched ? sched.subject : cfg.subject;
-    const targetClass = sched ? sched.classLevel : cfg.targetClass;
-    const targetDuration = sched ? (sched.durationMinutes || 80) : cfg.durationMinutes;
     const targetToken = sched ? (sched.token || cfg.examToken) : cfg.examToken;
     const targetDay = sched ? sched.day : cfg.scheduleDay;
     const targetDate = sched ? (sched.dateFormatted || (window.cbtAdmin ? window.cbtAdmin.formatIndonesianDate(sched.dateIso) : '')) : cfg.scheduleDate;
     const targetTime = sched ? (sched.timeRange || '') : cfg.scheduleTime;
-
-    const classPart = targetClass && targetClass !== 'Semua Kelas' ? ` (${targetClass})` : '';
-    if (subtitleEl) subtitleEl.innerText = `${targetSubject}${classPart} • Alokasi Waktu: ${targetDuration} Menit`;
 
     if (scheduleBadgeEl && scheduleTextEl) {
       const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
       if (activeList.length > 1 && sched) {
         const datePart = [targetDay, targetDate].filter(Boolean).join(', ');
         const timePart = targetTime ? ` • ${targetTime}` : '';
-        scheduleTextEl.innerText = `${activeList.length} Mapel Aktif Serentak • Dipilih: ${targetSubject}${classPart} (${datePart}${timePart})`;
+        scheduleTextEl.innerText = `${activeList.length} Jadwal Aktif Serentak${datePart ? ` (${datePart}${timePart})` : ''}`;
         scheduleBadgeEl.classList.remove('hidden');
       } else if (targetDay || targetDate) {
         const datePart = [targetDay, targetDate].filter(Boolean).join(', ');
@@ -685,7 +723,7 @@ document.addEventListener('DOMContentLoaded', () => {
         activeList.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s.id;
-          opt.innerText = `${s.subject} (${s.classLevel || 'Semua Kelas'}) — ${s.durationMinutes || 80} Mnt`;
+          opt.innerText = `${s.subject} (${s.classLevel || 'Semua Kelas'})`;
           selectEl.appendChild(opt);
         });
         if (prevSelectedId && activeList.some(s => s.id === prevSelectedId)) {
@@ -1061,14 +1099,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const optEl = document.createElement('div');
         optEl.className = `option-label cursor-pointer flex items-center p-3 sm:p-4 rounded-2xl border-2 transition-all ${
           isSelected
-            ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-xs'
-            : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50'
+            ? 'selected border-blue-600 bg-blue-50 text-blue-900 dark:bg-blue-950/60 dark:border-blue-500 dark:text-blue-100 shadow-xs'
+            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 hover:border-blue-300 dark:hover:border-blue-500 hover:bg-slate-50 dark:hover:bg-slate-800'
         }`;
         optEl.innerHTML = `
           <div class="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl font-bold text-xs sm:text-sm mr-3 transition-colors flex-shrink-0 ${
-            isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'
+            isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
           }">${opt.key}</div>
-          <div class="text-xs sm:text-base font-medium flex-1 text-slate-800">${opt.text}</div>
+          <div class="text-xs sm:text-base font-medium flex-1 text-slate-800 dark:text-slate-100">${opt.text}</div>
           <span class="hidden md:inline-flex kbd-hint ml-2">${opt.key}</span>
         `;
         optEl.addEventListener('click', () => {
@@ -1084,7 +1122,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const selectedArr = Array.isArray(currentAnswerData) ? currentAnswerData : [];
 
       const hintEl = document.createElement('div');
-      hintEl.className = "text-[11px] sm:text-xs font-bold text-purple-700 bg-purple-50 p-2.5 rounded-xl border border-purple-200 mb-2 flex items-center gap-1.5";
+      hintEl.className = "text-[11px] sm:text-xs font-bold text-purple-700 dark:text-purple-200 bg-purple-50 dark:bg-purple-950/50 p-2.5 rounded-xl border border-purple-200 dark:border-purple-800/60 mb-2 flex items-center gap-1.5";
       hintEl.innerHTML = `
         <svg class="w-3.5 h-3.5 text-purple-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <span>Pilihlah satu atau lebih opsi yang benar!</span>
@@ -1096,16 +1134,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const optEl = document.createElement('div');
         optEl.className = `option-label cursor-pointer flex items-center p-3 sm:p-4 rounded-2xl border-2 transition-all ${
           isChecked
-            ? 'border-purple-600 bg-purple-50 text-purple-950 shadow-xs'
-            : 'border-slate-200 bg-white hover:border-purple-300 hover:bg-slate-50'
+            ? 'selected border-purple-600 bg-purple-50 text-purple-950 dark:bg-purple-950/60 dark:border-purple-500 dark:text-purple-100 shadow-xs'
+            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 hover:border-purple-300 dark:hover:border-purple-500 hover:bg-slate-50 dark:hover:bg-slate-800'
         }`;
         optEl.innerHTML = `
           <div class="w-8 h-8 flex items-center justify-center rounded-lg font-bold text-xs sm:text-sm mr-3 transition-colors flex-shrink-0 ${
-            isChecked ? 'bg-purple-600 text-white' : 'border-2 border-slate-300 text-slate-600 bg-white'
+            isChecked ? 'bg-purple-600 text-white' : 'border-2 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-200 bg-white dark:bg-slate-800'
           }">
             ${isChecked ? '✓' : opt.key}
           </div>
-          <div class="text-xs sm:text-base font-medium flex-1 text-slate-800">${opt.text}</div>
+          <div class="text-xs sm:text-base font-medium flex-1 text-slate-800 dark:text-slate-100">${opt.text}</div>
           <span class="hidden md:inline-flex kbd-hint ml-2">${opt.key}</span>
         `;
         optEl.addEventListener('click', () => {
@@ -1471,13 +1509,45 @@ document.addEventListener('DOMContentLoaded', () => {
     const allTabBtns = document.querySelectorAll('.admin-tab-btn');
     const allTabPanes = document.querySelectorAll('.admin-tab-pane');
 
-    allTabBtns.forEach(b => {
-      b.classList.remove('border-blue-600', 'text-blue-600', 'bg-blue-50');
-      b.classList.add('border-transparent', 'text-slate-600', 'hover:text-slate-900');
-      if (b.getAttribute('data-tab') === targetTab) {
-        b.classList.add('border-blue-600', 'text-blue-600', 'bg-blue-50');
-        b.classList.remove('border-transparent', 'text-slate-600');
+    const tabGradientStyles = {
+      tabResults: {
+        idle: 'bg-gradient-to-r from-sky-50 to-blue-100/80 text-blue-800 border-blue-200/80 dark:from-sky-950/70 dark:to-blue-900/50 dark:text-sky-200 dark:border-blue-800/60 hover:brightness-95',
+        active: 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-transparent shadow-md shadow-blue-600/25'
+      },
+      tabMonitoring: {
+        idle: 'bg-gradient-to-r from-cyan-50 to-teal-100/80 text-teal-800 border-teal-200/80 dark:from-cyan-950/70 dark:to-teal-900/50 dark:text-teal-200 dark:border-teal-800/60 hover:brightness-95',
+        active: 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white border-transparent shadow-md shadow-teal-600/25'
+      },
+      tabSchedules: {
+        idle: 'bg-gradient-to-r from-indigo-50 to-violet-100/80 text-indigo-800 border-indigo-200/80 dark:from-indigo-950/70 dark:to-violet-900/50 dark:text-indigo-200 dark:border-indigo-800/60 hover:brightness-95',
+        active: 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white border-transparent shadow-md shadow-indigo-600/25'
+      },
+      tabQuestions: {
+        idle: 'bg-gradient-to-r from-emerald-50 to-teal-100/75 text-emerald-800 border-emerald-200/80 dark:from-emerald-950/70 dark:to-teal-900/50 dark:text-emerald-200 dark:border-emerald-800/60 hover:brightness-95',
+        active: 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-transparent shadow-md shadow-emerald-600/25'
+      },
+      tabStudents: {
+        idle: 'bg-gradient-to-r from-amber-50 to-orange-100/75 text-amber-900 border-amber-200/80 dark:from-amber-950/70 dark:to-orange-900/50 dark:text-amber-200 dark:border-amber-800/60 hover:brightness-95',
+        active: 'bg-gradient-to-r from-amber-500 to-orange-600 text-white border-transparent shadow-md shadow-amber-500/25'
+      },
+      tabTeachers: {
+        idle: 'bg-gradient-to-r from-rose-50 to-pink-100/75 text-rose-800 border-rose-200/80 dark:from-rose-950/70 dark:to-pink-900/50 dark:text-rose-200 dark:border-rose-800/60 hover:brightness-95',
+        active: 'bg-gradient-to-r from-rose-600 to-pink-600 text-white border-transparent shadow-md shadow-rose-600/25'
+      },
+      tabSettings: {
+        idle: 'bg-gradient-to-r from-slate-100 to-indigo-100/80 text-slate-800 border-slate-300/80 dark:from-slate-800 dark:to-indigo-950/60 dark:text-slate-200 dark:border-slate-700 hover:brightness-95',
+        active: 'bg-gradient-to-r from-slate-700 to-indigo-700 text-white border-transparent shadow-md shadow-slate-700/25'
       }
+    };
+
+    allTabBtns.forEach(b => {
+      const tabKey = b.getAttribute('data-tab');
+      const stylePair = tabGradientStyles[tabKey] || tabGradientStyles.tabResults;
+      const isHidden = b.classList.contains('hidden');
+      const isActive = tabKey === targetTab;
+      b.className = `admin-tab-btn px-3.5 py-2 rounded-xl font-bold border flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
+        isActive ? stylePair.active : stylePair.idle
+      }${isHidden ? ' hidden' : ''}`;
     });
 
     allTabPanes.forEach(pane => {
