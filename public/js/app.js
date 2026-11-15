@@ -712,7 +712,15 @@ document.addEventListener('DOMContentLoaded', () => {
     applyCbtBrandLogo(schoolCfg.logoCbt || '');
 
     const cfg = window.examEngine.config;
-    if (titleEl) titleEl.innerText = cfg.examTitle;
+    if (titleEl) {
+      const titleText = cfg.examTitle || 'Asesmen Sumatif Akhir Semester I';
+      titleEl.innerText = titleText;
+      if (titleText.length > 38) {
+        titleEl.classList.remove('whitespace-nowrap');
+      } else {
+        titleEl.classList.add('whitespace-nowrap');
+      }
+    }
 
     const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
     if (selectGroup && selectEl) {
@@ -3562,6 +3570,21 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnGenerateToken) {
     btnGenerateToken.addEventListener('click', () => {
       document.getElementById('cfgExamToken').value = window.cbtAdmin.generateRandomToken();
+    });
+  }
+
+  const btnQuickSaveExamTitle = document.getElementById('btnQuickSaveExamTitle');
+  if (btnQuickSaveExamTitle) {
+    btnQuickSaveExamTitle.addEventListener('click', () => {
+      const titleInput = document.getElementById('cfgExamTitle');
+      const newTitle = titleInput ? titleInput.value.trim() : '';
+      if (!newTitle) {
+        alert("Judul ujian tidak boleh kosong!");
+        return;
+      }
+      window.cbtAdmin.updateConfig({ examTitle: newTitle });
+      renderConfigInfoOnLogin();
+      alert(`Judul ujian berhasil diperbarui menjadi:\n"${newTitle}"`);
     });
   }
 

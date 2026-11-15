@@ -106,7 +106,7 @@ class ExamEngine {
       try {
         let parsed = JSON.parse(saved);
         if (parsed.examTitle && parsed.examTitle.includes('TKA')) {
-          parsed.examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER (CBT)";
+          parsed.examTitle = "Asesmen Sumatif Akhir Semester I";
         }
         if (parsed.examToken && parsed.examToken.includes('TKA')) {
           parsed.examToken = "CBT80M";

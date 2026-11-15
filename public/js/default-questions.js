@@ -5,7 +5,7 @@
 // 3. 'true_false' : Tabel Pernyataan Benar / Salah
 
 const DEFAULT_EXAM_CONFIG = {
-  examTitle: "UJIAN SEKOLAH BERBASIS KOMPUTER (CBT)",
+  examTitle: "Asesmen Sumatif Akhir Semester I",
   subject: "Literasi, Numerasi & Pengetahuan Umum",
   targetClass: "Semua Kelas",
   scheduleDay: "",
