@@ -521,6 +521,45 @@ class CBTAdmin {
     return newQ;
   }
 
+  updateQuestion(id, questionData) {
+    const questions = [...window.examEngine.questions];
+    const targetIdx = questions.findIndex(q => String(q.id) === String(id));
+    if (targetIdx === -1) {
+      return { success: false, message: "Butir soal tidak ditemukan di bank soal." };
+    }
+
+    const existing = questions[targetIdx];
+    const cur = this.getCurrentTeacher();
+    const nextType = questionData.type || existing.type || 'single';
+
+    const updatedQ = {
+      id: existing.id,
+      subject: String(questionData.subject || existing.subject || "Umum").trim(),
+      classLevel: String(questionData.classLevel || existing.classLevel || "Semua Kelas").trim(),
+      createdBy: existing.createdBy || questionData.createdBy || (cur ? cur.name : "Proktor Utama / Admin"),
+      type: nextType,
+      question: questionData.question,
+      image: questionData.image !== undefined ? questionData.image : (existing.image || ""),
+      weight: parseInt(questionData.weight, 10) || existing.weight || 10
+    };
+
+    if (nextType === 'single') {
+      updatedQ.options = questionData.options;
+      updatedQ.correctAnswer = questionData.correctAnswer;
+    } else if (nextType === 'multiple') {
+      updatedQ.options = questionData.options;
+      updatedQ.correctAnswer = Array.isArray(questionData.correctAnswer)
+        ? questionData.correctAnswer
+        : [questionData.correctAnswer];
+    } else if (nextType === 'true_false') {
+      updatedQ.statements = questionData.statements;
+    }
+
+    questions[targetIdx] = updatedQ;
+    window.examEngine.saveQuestions(questions);
+    return { success: true, question: updatedQ };
+  }
+
   deleteQuestion(id) {
     const questions = window.examEngine.questions.filter(q => q.id !== id);
     window.examEngine.saveQuestions(questions);

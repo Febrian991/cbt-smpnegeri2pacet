@@ -228,17 +228,28 @@ document.addEventListener('DOMContentLoaded', () => {
     reader.readAsDataURL(file);
   }
 
-  function resetImageUploader() {
-    currentUploadedImageBase64 = "";
+  function setImageUploaderPreview(dataUrl) {
     const fileInput = document.getElementById('qInputFileImage');
     const btnRemove = document.getElementById('btnRemoveImage');
     const previewContainer = document.getElementById('imagePreviewContainer');
     const previewImg = document.getElementById('imagePreviewImg');
 
     if (fileInput) fileInput.value = "";
-    if (previewImg) previewImg.src = "";
-    if (previewContainer) previewContainer.classList.add('hidden');
-    if (btnRemove) btnRemove.classList.add('hidden');
+    if (dataUrl && String(dataUrl).trim() !== "") {
+      currentUploadedImageBase64 = dataUrl;
+      if (previewImg) previewImg.src = dataUrl;
+      if (previewContainer) previewContainer.classList.remove('hidden');
+      if (btnRemove) btnRemove.classList.remove('hidden');
+    } else {
+      currentUploadedImageBase64 = "";
+      if (previewImg) previewImg.src = "";
+      if (previewContainer) previewContainer.classList.add('hidden');
+      if (btnRemove) btnRemove.classList.add('hidden');
+    }
+  }
+
+  function resetImageUploader() {
+    setImageUploaderPreview("");
   }
 
   // ===================== UPLOAD LOGO KOP KIRI, KANAN, & LOGO CBT =====================
@@ -2800,14 +2811,23 @@ document.addEventListener('DOMContentLoaded', () => {
               Bobot: ${q.weight || 10}
             </span>
           </div>
-          <button class="btn-delete-q text-red-600 hover:text-red-800 p-1 rounded-lg hover:bg-red-50 text-xs font-medium cursor-pointer">
-            🗑️ Hapus
-          </button>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" class="btn-edit-q text-blue-600 hover:text-blue-800 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-xs font-semibold cursor-pointer transition" title="Edit Soal Ini">
+              ✏️ Edit
+            </button>
+            <button type="button" class="btn-delete-q text-red-600 hover:text-red-800 px-2 py-1 rounded-lg hover:bg-red-50 text-xs font-medium cursor-pointer transition" title="Hapus Soal Ini">
+              🗑️ Hapus
+            </button>
+          </div>
         </div>
         <p class="text-slate-800 text-xs sm:text-sm font-medium mt-2.5 whitespace-pre-line leading-relaxed">${q.question}</p>
         ${q.image ? `<div class="mt-2.5 p-1.5 bg-slate-50 rounded-xl border border-slate-200 inline-block max-w-xs"><img src="${q.image}" alt="Gambar Soal" class="rounded-lg max-h-28 object-contain"></div>` : ''}
         ${answerDetailsHtml}
       `;
+
+      card.querySelector('.btn-edit-q').addEventListener('click', () => {
+        openQuestionModal(q, index + 1);
+      });
 
       card.querySelector('.btn-delete-q').addEventListener('click', () => {
         if (confirm(`Yakin ingin menghapus Soal No. ${index + 1} (${qSubj})?`)) {
@@ -2849,17 +2869,108 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const btnOpenAddQuestion = document.getElementById('btnOpenAddQuestion');
   const btnCloseQuestionForm = document.getElementById('btnCloseQuestionForm');
+  const btnCancelQuestionForm = document.getElementById('btnCancelQuestionForm');
 
-  if (btnOpenAddQuestion) {
-    btnOpenAddQuestion.addEventListener('click', () => {
-      document.getElementById('formQuestionItem').reset();
-      resetImageUploader();
-      setupQuestionBankFilters();
+  function closeQuestionModal() {
+    if (modalQuestionForm) modalQuestionForm.classList.add('hidden');
+    const editIdEl = document.getElementById('editQuestionId');
+    if (editIdEl) editIdEl.value = '';
+    resetImageUploader();
+  }
+
+  function openQuestionModal(question = null, displayNumber = null) {
+    const formEl = document.getElementById('formQuestionItem');
+    if (formEl) formEl.reset();
+    resetImageUploader();
+    setupQuestionBankFilters();
+
+    const titleEl = document.getElementById('questionFormTitle');
+    const submitBtnEl = document.getElementById('btnSubmitQuestionForm');
+    const editIdEl = document.getElementById('editQuestionId');
+    const modalSubjEl = document.getElementById('qInputSubject');
+    const modalClassEl = document.getElementById('qInputClassLevel');
+
+    if (question) {
+      if (titleEl) titleEl.innerText = displayNumber ? `Edit Soal No. ${displayNumber}` : "Edit Butir Soal Ujian";
+      if (submitBtnEl) submitBtnEl.innerText = "Simpan Perubahan Soal";
+      if (editIdEl) editIdEl.value = question.id;
+
+      const rawSubj = (question.subject && String(question.subject).trim()) ? String(question.subject).trim() : 'Umum';
+      if (modalSubjEl) {
+        if (!Array.from(modalSubjEl.options).some(o => o.value === rawSubj)) {
+          const extraOpt = document.createElement('option');
+          extraOpt.value = rawSubj;
+          extraOpt.innerText = rawSubj;
+          modalSubjEl.appendChild(extraOpt);
+        }
+        modalSubjEl.value = rawSubj;
+      }
+
+      const rawCls = (question.classLevel && String(question.classLevel).trim()) ? String(question.classLevel).trim() : 'Semua Kelas';
+      if (modalClassEl) {
+        if (!Array.from(modalClassEl.options).some(o => o.value === rawCls)) {
+          const extraCls = document.createElement('option');
+          extraCls.value = rawCls;
+          extraCls.innerText = rawCls;
+          modalClassEl.appendChild(extraCls);
+        }
+        modalClassEl.value = rawCls;
+      }
+
+      const qType = question.type || 'single';
+      if (qInputType) {
+        qInputType.value = qType;
+        qInputType.dispatchEvent(new Event('change'));
+      }
+
+      const textEl = document.getElementById('qInputText');
+      if (textEl) textEl.value = question.question || '';
+
+      const weightEl = document.getElementById('qInputWeight');
+      if (weightEl) weightEl.value = question.weight || 10;
+
+      if (question.image) {
+        setImageUploaderPreview(question.image);
+      }
+
+      if (qType === 'single' || qType === 'multiple') {
+        const optsMap = {};
+        (question.options || []).forEach(o => {
+          if (o && o.key) optsMap[String(o.key).toUpperCase()] = o.text || '';
+        });
+        document.getElementById('qInputOptA').value = optsMap['A'] || '';
+        document.getElementById('qInputOptB').value = optsMap['B'] || '';
+        document.getElementById('qInputOptC').value = optsMap['C'] || '';
+        document.getElementById('qInputOptD').value = optsMap['D'] || '';
+        document.getElementById('qInputOptE').value = optsMap['E'] || '';
+
+        if (qType === 'single') {
+          document.getElementById('qInputCorrectSingle').value = String(question.correctAnswer || 'A').toUpperCase();
+        } else {
+          const correctKeys = Array.isArray(question.correctAnswer)
+            ? question.correctAnswer.map(k => String(k).toUpperCase())
+            : [String(question.correctAnswer || '').toUpperCase()];
+          document.querySelectorAll('input[name="multiCorrect"]').forEach(cb => {
+            cb.checked = correctKeys.includes(cb.value);
+          });
+        }
+      } else if (qType === 'true_false') {
+        const stmts = Array.isArray(question.statements) ? question.statements : [];
+        for (let i = 0; i < 3; i++) {
+          const stmtInput = document.getElementById(`tfStmt${i + 1}`);
+          const corrSelect = document.getElementById(`tfCorrect${i + 1}`);
+          const item = stmts[i];
+          if (stmtInput) stmtInput.value = item ? (item.text || '') : '';
+          if (corrSelect) corrSelect.value = item && item.correct === 'S' ? 'S' : 'B';
+        }
+      }
+    } else {
+      if (titleEl) titleEl.innerText = "Tambah Soal Ujian Baru";
+      if (submitBtnEl) submitBtnEl.innerText = "Simpan Soal Ujian";
+      if (editIdEl) editIdEl.value = "";
 
       const subjFilterVal = document.getElementById('filterQuestionsSubject')?.value;
       const classFilterVal = document.getElementById('filterQuestionsClass')?.value;
-      const modalSubjEl = document.getElementById('qInputSubject');
-      const modalClassEl = document.getElementById('qInputClassLevel');
 
       if (modalSubjEl && subjFilterVal && subjFilterVal !== 'ALL') {
         const targetVal = subjFilterVal === 'UMUM' ? 'Umum' : subjFilterVal;
@@ -2880,21 +2991,28 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (qInputType) qInputType.dispatchEvent(new Event('change'));
-      modalQuestionForm.classList.remove('hidden');
-    });
+    }
+
+    if (modalQuestionForm) modalQuestionForm.classList.remove('hidden');
+  }
+
+  if (btnOpenAddQuestion) {
+    btnOpenAddQuestion.addEventListener('click', () => openQuestionModal(null));
   }
 
   if (btnCloseQuestionForm) {
-    btnCloseQuestionForm.addEventListener('click', () => {
-      modalQuestionForm.classList.add('hidden');
-      resetImageUploader();
-    });
+    btnCloseQuestionForm.addEventListener('click', closeQuestionModal);
+  }
+
+  if (btnCancelQuestionForm) {
+    btnCancelQuestionForm.addEventListener('click', closeQuestionModal);
   }
 
   const formQuestionItem = document.getElementById('formQuestionItem');
   if (formQuestionItem) {
     formQuestionItem.addEventListener('submit', (e) => {
       e.preventDefault();
+      const editId = document.getElementById('editQuestionId')?.value.trim() || '';
       const subject = document.getElementById('qInputSubject')?.value || 'Umum';
       const classLevel = document.getElementById('qInputClassLevel')?.value || 'Semua Kelas';
       const type = qInputType.value;
@@ -2905,27 +3023,36 @@ document.addEventListener('DOMContentLoaded', () => {
       let qData = { subject, classLevel, type, question: questionText, image, weight };
 
       if (type === 'single') {
-        qData.options = [
+        const optE = document.getElementById('qInputOptE').value.trim();
+        const correctSingle = document.getElementById('qInputCorrectSingle').value;
+        const opts = [
           { key: "A", text: document.getElementById('qInputOptA').value.trim() },
           { key: "B", text: document.getElementById('qInputOptB').value.trim() },
           { key: "C", text: document.getElementById('qInputOptC').value.trim() },
-          { key: "D", text: document.getElementById('qInputOptD').value.trim() },
-          { key: "E", text: document.getElementById('qInputOptE').value.trim() }
+          { key: "D", text: document.getElementById('qInputOptD').value.trim() }
         ];
-        qData.correctAnswer = document.getElementById('qInputCorrectSingle').value;
+        if (optE || correctSingle === 'E') {
+          opts.push({ key: "E", text: optE });
+        }
+        qData.options = opts;
+        qData.correctAnswer = correctSingle;
       } else if (type === 'multiple') {
-        qData.options = [
-          { key: "A", text: document.getElementById('qInputOptA').value.trim() },
-          { key: "B", text: document.getElementById('qInputOptB').value.trim() },
-          { key: "C", text: document.getElementById('qInputOptC').value.trim() },
-          { key: "D", text: document.getElementById('qInputOptD').value.trim() },
-          { key: "E", text: document.getElementById('qInputOptE').value.trim() }
-        ];
         const checkedBoxes = Array.from(document.querySelectorAll('input[name="multiCorrect"]:checked')).map(el => el.value);
         if (checkedBoxes.length === 0) {
           alert("Pilih minimal 1 kunci jawaban untuk soal pilihan ganda kompleks!");
           return;
         }
+        const optE = document.getElementById('qInputOptE').value.trim();
+        const opts = [
+          { key: "A", text: document.getElementById('qInputOptA').value.trim() },
+          { key: "B", text: document.getElementById('qInputOptB').value.trim() },
+          { key: "C", text: document.getElementById('qInputOptC').value.trim() },
+          { key: "D", text: document.getElementById('qInputOptD').value.trim() }
+        ];
+        if (optE || checkedBoxes.includes('E')) {
+          opts.push({ key: "E", text: optE });
+        }
+        qData.options = opts;
         qData.correctAnswer = checkedBoxes;
       } else if (type === 'true_false') {
         const s1 = document.getElementById('tfStmt1').value.trim();
@@ -2947,9 +3074,17 @@ document.addEventListener('DOMContentLoaded', () => {
         qData.statements = statements;
       }
 
-      window.cbtAdmin.addQuestion(qData);
-      modalQuestionForm.classList.add('hidden');
-      resetImageUploader();
+      if (editId) {
+        const res = window.cbtAdmin.updateQuestion(editId, qData);
+        if (!res.success) {
+          alert(res.message || "Gagal memperbarui soal.");
+          return;
+        }
+      } else {
+        window.cbtAdmin.addQuestion(qData);
+      }
+
+      closeQuestionModal();
       setupQuestionBankFilters();
 
       const subjFilterEl = document.getElementById('filterQuestionsSubject');
