@@ -1477,6 +1477,442 @@ class CBTAdmin {
       return { success: false, message: "Gagal membaca file backup: " + err.message };
     }
   }
+
+  // ===================== EKSPOR NASKAH SOAL (SESUAI TEMPLATE PDF + SOAL BERGAMBAR) =====================
+  escapePrintHtml(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  estimateQuestionHeightPx(q, layoutCols = 2) {
+    const charsPerLine = layoutCols === 2 ? 42 : 90;
+    const text = String(q.question || '');
+    const explicitLines = text.split(/\r?\n/);
+    let stemLines = 0;
+    explicitLines.forEach(line => {
+      stemLines += Math.max(1, Math.ceil(line.length / charsPerLine));
+    });
+
+    let h = 14 + stemLines * 15;
+    if (q.image && String(q.image).trim() !== '') {
+      h += layoutCols === 2 ? 148 : 225;
+    }
+
+    const type = q.type || 'single';
+    if (type === 'true_false') {
+      const stmts = Array.isArray(q.statements) ? q.statements : [];
+      h += 28 + stmts.length * 24;
+    } else {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const optCharsPerLine = layoutCols === 2 ? 36 : 82;
+      opts.forEach(opt => {
+        const oLen = String(opt.text || '').length;
+        h += Math.max(1, Math.ceil(oLen / optCharsPerLine)) * 14 + 3;
+      });
+    }
+    return h + 10;
+  }
+
+  renderSingleQuestionPrintHtml(q, displayNumber, layoutCols = 2) {
+    const type = q.type || 'single';
+    const qText = this.escapePrintHtml(q.question || '').replace(/\r?\n/g, '<br>');
+    const imgMaxH = layoutCols === 2 ? '132px' : '210px';
+    const imgHtml = (q.image && String(q.image).trim() !== '')
+      ? `<div style="margin:5px 0 6px 0; text-align:left;"><img src="${q.image}" alt="Gambar Soal ${displayNumber}" style="max-width:100%; max-height:${imgMaxH}; width:auto; height:auto; object-fit:contain; display:block; border:1px solid #cbd5e1; border-radius:4px; padding:2px; background:#ffffff;"></div>`
+      : '';
+
+    let bodyHtml = '';
+    if (type === 'true_false') {
+      const stmts = Array.isArray(q.statements) ? q.statements : [];
+      const rows = stmts.map((st, idx) => `
+        <tr>
+          <td style="border:1px solid #334155; padding:3px 5px; font-size:10px; line-height:1.35;">${idx + 1}. ${this.escapePrintHtml(st.text || '')}</td>
+          <td style="border:1px solid #334155; padding:3px 4px; width:24px; text-align:center; font-size:10px;"></td>
+          <td style="border:1px solid #334155; padding:3px 4px; width:24px; text-align:center; font-size:10px;"></td>
+        </tr>
+      `).join('');
+      bodyHtml = `
+        <table style="width:100%; border-collapse:collapse; margin-top:4px; margin-bottom:2px;">
+          <thead>
+            <tr style="background:#f1f5f9;">
+              <th style="border:1px solid #334155; padding:3px 5px; font-size:9.5px; text-align:left;">Pernyataan</th>
+              <th style="border:1px solid #334155; padding:3px 4px; width:24px; font-size:9.5px; text-align:center;">B</th>
+              <th style="border:1px solid #334155; padding:3px 4px; width:24px; font-size:9.5px; text-align:center;">S</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    } else {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const optRows = opts.map(opt => {
+        const lowerKey = String(opt.key || 'a').toLowerCase();
+        const bullet = type === 'multiple' ? `☐ ${lowerKey}.` : `${lowerKey}.`;
+        return `
+          <tr>
+            <td style="width:${type === 'multiple' ? '26px' : '16px'}; vertical-align:top; font-size:10.5px; line-height:1.38; padding:1px 0;">${bullet}</td>
+            <td style="vertical-align:top; font-size:10.5px; line-height:1.38; padding:1px 0;">${this.escapePrintHtml(opt.text || '')}</td>
+          </tr>
+        `;
+      }).join('');
+      bodyHtml = `<table style="width:100%; border-collapse:collapse; margin-top:2px;"><tbody>${optRows}</tbody></table>`;
+    }
+
+    return `
+      <div class="naskah-soal-item" style="margin-bottom:8px; break-inside:avoid; page-break-inside:avoid;">
+        <table style="width:100%; border-collapse:collapse;">
+          <tbody>
+            <tr>
+              <td style="width:20px; vertical-align:top; font-size:10.5px; line-height:1.38; font-weight:normal;">${displayNumber}.</td>
+              <td style="vertical-align:top; font-size:10.5px; line-height:1.38;">
+                <div>${qText}</div>
+                ${imgHtml}
+                <div style="margin-top:2px;">${bodyHtml}</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  generateExamPaperHtml(questionsList, options = {}) {
+    const cfg = this.getSchoolConfig();
+    const examCfg = window.examEngine ? window.examEngine.config : {};
+    const layoutCols = parseInt(options.layoutCols, 10) === 1 ? 1 : 2;
+    const examTitle = String(options.examTitle || examCfg.examTitle || 'ASESMEN SUMATIF AKHIR SEMESTER (ASAS)').trim().toUpperCase();
+    const semester = String(options.semester || 'SEMESTER GANJIL').trim().toUpperCase();
+    const academicYear = String(options.academicYear || '2025/2026').trim().toUpperCase();
+    const subjectName = String(options.subject || examCfg.subject || 'Semua Mata Pelajaran').trim();
+    const className = (options.classLevel && options.classLevel !== 'ALL')
+      ? options.classLevel
+      : '..............................';
+    const durationText = String(options.duration || `${examCfg.durationMinutes || 80} Menit`).trim();
+    const dateText = String(options.dateText || '').trim() || '......................................';
+    const includeAnswerKey = Boolean(options.includeAnswerKey);
+
+    const logoHtml = cfg.logoLeft
+      ? `<img src="${cfg.logoLeft}" alt="Logo Sekolah" style="width:68px; height:68px; object-fit:contain; display:block;">`
+      : (cfg.logoRight
+        ? `<img src="${cfg.logoRight}" alt="Logo Sekolah" style="width:68px; height:68px; object-fit:contain; display:block;">`
+        : `<div style="width:62px; height:62px; border:1.5px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px;">LOGO</div>`);
+
+    const kopAndMetaHtml = `
+      <!-- KOP SURAT RESMI -->
+      <table style="width:100%; border-collapse:collapse; margin-bottom:2px;">
+        <tbody>
+          <tr>
+            <td style="width:78px; vertical-align:middle; text-align:left; padding-bottom:6px;">
+              ${logoHtml}
+            </td>
+            <td style="vertical-align:middle; text-align:center; padding-bottom:6px; padding-right:24px;">
+              <div style="font-size:13px; font-weight:normal; letter-spacing:0.4px; text-transform:uppercase; line-height:1.2;">${this.escapePrintHtml(cfg.schoolSubtitle || 'PEMERINTAH KABUPATEN CIANJUR')}</div>
+              <div style="font-size:18px; font-weight:bold; letter-spacing:0.6px; text-transform:uppercase; line-height:1.25; margin-top:1px;">${this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET')}</div>
+              <div style="font-size:10px; line-height:1.3; margin-top:2px;">${this.escapePrintHtml(cfg.schoolAddress || '')}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="border-top:2.5px solid #000000; border-bottom:1px solid #000000; height:2px; margin-bottom:8px;"></div>
+
+      <!-- JUDUL UJIAN -->
+      <div style="text-align:center; font-weight:bold; font-size:12px; line-height:1.35; text-transform:uppercase; margin-bottom:6px;">
+        <div>${this.escapePrintHtml(examTitle)}</div>
+        <div>${this.escapePrintHtml(semester)}</div>
+        <div>TAHUN PELAJARAN ${this.escapePrintHtml(academicYear)}</div>
+      </div>
+
+      <!-- IDENTITAS MAPEL & PESERTA -->
+      <div style="border-top:1.5px solid #000000; border-bottom:1.5px solid #000000; padding:5px 2px; margin-bottom:8px;">
+        <table style="width:100%; border-collapse:collapse; font-size:10.5px; line-height:1.45;">
+          <tbody>
+            <tr>
+              <td style="width:18%; vertical-align:top;">Mata Pelajaran</td>
+              <td style="width:39%; vertical-align:top;">: ${this.escapePrintHtml(subjectName)}</td>
+              <td style="width:12%; vertical-align:top;">Kelas</td>
+              <td style="width:31%; vertical-align:top;">: ${this.escapePrintHtml(className)}</td>
+            </tr>
+            <tr>
+              <td style="vertical-align:top;">Nama Lengkap</td>
+              <td style="vertical-align:top;">: ......................................</td>
+              <td style="vertical-align:top;">Waktu</td>
+              <td style="vertical-align:top;">: ${this.escapePrintHtml(durationText)}</td>
+            </tr>
+            <tr>
+              <td style="vertical-align:top;">Hari/Tanggal</td>
+              <td colspan="3" style="vertical-align:top;">: ${this.escapePrintHtml(dateText)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- PETUNJUK UMUM -->
+      <div style="font-size:10.5px; line-height:1.4; padding-bottom:6px; border-bottom:1.5px solid #000000; margin-bottom:10px;">
+        <div style="font-weight:bold; margin-bottom:2px;">Petunjuk Umum</div>
+        <div>1. Berdoalah sebelum mengerjakan</div>
+        <div>2. Bacalah soal dengan baik dan teliti</div>
+        <div>3. Kerjakan dengan jujur, dan dilarang bekerjasama karena Allah Maha Mengetahui</div>
+        <div>4. Periksa kembali jawaban sebelum diserahkan kepada pengawas</div>
+      </div>
+    `;
+
+    // Kelompokkan tipe soal berurutan (I. PG Tunggal, II. PG Kompleks, III. Benar/Salah)
+    const singleQs = questionsList.filter(q => (q.type || 'single') === 'single');
+    const multiQs = questionsList.filter(q => q.type === 'multiple');
+    const tfQs = questionsList.filter(q => q.type === 'true_false');
+
+    const blocks = [];
+    let numCounter = 1;
+    if (singleQs.length > 0) {
+      blocks.push({
+        isHeading: true,
+        height: 24,
+        html: `<div style="font-weight:bold; font-size:11px; margin-bottom:6px;">I. Pilihlah satu jawaban yang paling tepat!</div>`
+      });
+      singleQs.forEach(q => {
+        blocks.push({
+          isHeading: false,
+          height: this.estimateQuestionHeightPx(q, layoutCols),
+          html: this.renderSingleQuestionPrintHtml(q, numCounter, layoutCols),
+          answerKeyNum: numCounter,
+          answerKeyText: q.correctAnswer || '-'
+        });
+        numCounter += 1;
+      });
+    }
+
+    if (multiQs.length > 0) {
+      blocks.push({
+        isHeading: true,
+        height: 28,
+        html: `<div style="font-weight:bold; font-size:11px; margin:6px 0 6px 0;">${singleQs.length > 0 ? 'II' : 'I'}. Pilihan Ganda Kompleks (Pilihlah lebih dari satu jawaban yang benar!)</div>`
+      });
+      multiQs.forEach(q => {
+        const ans = Array.isArray(q.correctAnswers) ? q.correctAnswers.join(', ') : '-';
+        blocks.push({
+          isHeading: false,
+          height: this.estimateQuestionHeightPx(q, layoutCols),
+          html: this.renderSingleQuestionPrintHtml(q, numCounter, layoutCols),
+          answerKeyNum: numCounter,
+          answerKeyText: ans
+        });
+        numCounter += 1;
+      });
+    }
+
+    if (tfQs.length > 0) {
+      const roman = (singleQs.length > 0 && multiQs.length > 0) ? 'III' : ((singleQs.length > 0 || multiQs.length > 0) ? 'II' : 'I');
+      blocks.push({
+        isHeading: true,
+        height: 28,
+        html: `<div style="font-weight:bold; font-size:11px; margin:6px 0 6px 0;">${roman}. Tentukan Benar (B) atau Salah (S) pada pernyataan berikut!</div>`
+      });
+      tfQs.forEach(q => {
+        const ans = Array.isArray(q.statements) ? q.statements.map((s, idx) => `${idx + 1}:${s.answer}`).join(', ') : '-';
+        blocks.push({
+          isHeading: false,
+          height: this.estimateQuestionHeightPx(q, layoutCols),
+          html: this.renderSingleQuestionPrintHtml(q, numCounter, layoutCols),
+          answerKeyNum: numCounter,
+          answerKeyText: ans
+        });
+        numCounter += 1;
+      });
+    }
+
+    // Bagi blok ke halaman A4 agar rapi, tidak memotong soal bergambar di tengah kolom/halaman
+    const pages = [];
+    let idx = 0;
+    let pageNum = 0;
+
+    while (idx < blocks.length) {
+      const colLimit = pageNum === 0 ? 635 : 945;
+      if (layoutCols === 1) {
+        let used = 0;
+        const colItems = [];
+        while (idx < blocks.length) {
+          const b = blocks[idx];
+          if (colItems.length > 0 && used + b.height > colLimit) break;
+          // Jangan tinggalkan heading sendirian di bawah halaman
+          if (b.isHeading && idx + 1 < blocks.length && colItems.length > 0 && used + b.height + blocks[idx + 1].height > colLimit) break;
+          colItems.push(b.html);
+          used += b.height;
+          idx += 1;
+        }
+        pages.push({ pageNum, leftHtml: colItems.join(''), rightHtml: '' });
+      } else {
+        const fillColumn = () => {
+          let used = 0;
+          const items = [];
+          while (idx < blocks.length) {
+            const b = blocks[idx];
+            if (items.length > 0 && used + b.height > colLimit) break;
+            if (b.isHeading && idx + 1 < blocks.length && items.length > 0 && used + b.height + blocks[idx + 1].height > colLimit) break;
+            items.push(b.html);
+            used += b.height;
+            idx += 1;
+          }
+          return items.join('');
+        };
+        const leftHtml = fillColumn();
+        const rightHtml = fillColumn();
+        pages.push({ pageNum, leftHtml, rightHtml });
+      }
+      pageNum += 1;
+    }
+
+    const pagesHtml = pages.map((pg, pIndex) => {
+      const breakStyle = pIndex > 0 ? 'page-break-before:always; break-before:page;' : '';
+      const breakClass = pIndex > 0 ? 'naskah-page-break' : '';
+      const bodyLayout = layoutCols === 1
+        ? `<div>${pg.leftHtml}</div>`
+        : `
+          <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+            <tbody>
+              <tr>
+                <td style="width:48.5%; vertical-align:top; padding-right:10px;">${pg.leftHtml}</td>
+                <td style="width:3%;"></td>
+                <td style="width:48.5%; vertical-align:top; padding-left:10px;">${pg.rightHtml}</td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+
+      return `
+        <div class="naskah-paper-sheet ${breakClass}" style="${breakStyle} width:210mm; max-width:100%; margin:0 auto 14px auto; padding:12mm 14mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
+          ${pIndex === 0 ? kopAndMetaHtml : ''}
+          ${bodyLayout}
+        </div>
+      `;
+    }).join('');
+
+    let keyHtml = '';
+    if (includeAnswerKey) {
+      const keyItems = blocks.filter(b => !b.isHeading);
+      const keyRows = keyItems.map(item => `
+        <div style="border:1px solid #cbd5e1; padding:4px 8px; font-size:10.5px; display:flex; justify-content:space-between; gap:8px;">
+          <span style="font-weight:bold;">No. ${item.answerKeyNum}</span>
+          <span style="font-weight:bold; color:#1d4ed8;">${this.escapePrintHtml(item.answerKeyText)}</span>
+        </div>
+      `).join('');
+      keyHtml = `
+        <div class="naskah-paper-sheet naskah-page-break" style="page-break-before:always; break-before:page; width:210mm; max-width:100%; margin:0 auto 14px auto; padding:12mm 14mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
+          <div style="text-align:center; border-bottom:2px solid #000000; padding-bottom:6px; margin-bottom:12px;">
+            <div style="font-size:13px; font-weight:bold; text-transform:uppercase;">KUNCI JAWABAN • ${this.escapePrintHtml(subjectName)}</div>
+            <div style="font-size:11px;">${this.escapePrintHtml(examTitle)} (${this.escapePrintHtml(semester)} ${this.escapePrintHtml(academicYear)})</div>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
+            ${keyRows}
+          </div>
+        </div>
+      `;
+    }
+
+    return pagesHtml + keyHtml;
+  }
+
+  downloadQuestionsPDF(questionsList, options = {}) {
+    if (!questionsList || questionsList.length === 0) {
+      alert("Tidak ada soal yang dipilih untuk didownload.");
+      return;
+    }
+
+    const printArea = document.getElementById('printableQuestionsArea');
+    if (!printArea) {
+      window.print();
+      return;
+    }
+
+    printArea.innerHTML = this.generateExamPaperHtml(questionsList, options);
+    printArea.classList.remove('hidden');
+    document.body.classList.add('printing-questions');
+
+    const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
+    if (typeof html2pdf !== 'undefined') {
+      const opt = {
+        margin: [0, 0, 0, 0],
+        filename: `Naskah_Soal_${slug}_${Date.now()}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'], before: '.naskah-page-break', avoid: '.naskah-soal-item' }
+      };
+
+      html2pdf().set(opt).from(printArea).save().then(() => {
+        printArea.classList.add('hidden');
+        document.body.classList.remove('printing-questions');
+      }).catch(err => {
+        console.error("Gagal export Naskah PDF:", err);
+        window.print();
+        setTimeout(() => {
+          printArea.classList.add('hidden');
+          document.body.classList.remove('printing-questions');
+        }, 1000);
+      });
+    } else {
+      this.printQuestionsDirect(questionsList, options);
+    }
+  }
+
+  downloadQuestionsDOC(questionsList, options = {}) {
+    if (!questionsList || questionsList.length === 0) {
+      alert("Tidak ada soal yang dipilih untuk didownload.");
+      return;
+    }
+    const innerHtml = this.generateExamPaperHtml(questionsList, options);
+    const wordDocHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office"
+            xmlns:w="urn:schemas-microsoft-com:office:word"
+            xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <title>Naskah Soal Ujian</title>
+        <style>
+          @page { size: 21cm 29.7cm; margin: 1.2cm 1.4cm; }
+          body { font-family: "Times New Roman", Times, serif; color: #000000; }
+          .naskah-paper-sheet { width: 100% !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; }
+          .naskah-page-break { page-break-before: always; }
+        </style>
+      </head>
+      <body>${innerHtml}</body>
+      </html>
+    `;
+    const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
+    const blob = new Blob(['\ufeff', wordDocHtml], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Naskah_Soal_${slug}_${Date.now()}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  printQuestionsDirect(questionsList, options = {}) {
+    if (!questionsList || questionsList.length === 0) {
+      alert("Tidak ada soal yang dipilih untuk dicetak.");
+      return;
+    }
+    const printArea = document.getElementById('printableQuestionsArea');
+    if (!printArea) {
+      window.print();
+      return;
+    }
+    printArea.innerHTML = this.generateExamPaperHtml(questionsList, options);
+    printArea.classList.remove('hidden');
+    document.body.classList.add('printing-questions');
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        printArea.classList.add('hidden');
+        document.body.classList.remove('printing-questions');
+      }, 1000);
+    }, 250);
+  }
 }
 
 window.cbtAdmin = new CBTAdmin();

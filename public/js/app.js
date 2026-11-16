@@ -2973,6 +2973,133 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Pratinjau, Download PDF / Word (.doc), & Cetak Naskah Soal (Sesuai Format PDF Sekolah)
+  const modalPrintQuestionsPreview = document.getElementById('modalPrintQuestionsPreview');
+  const btnOpenPrintQuestions = document.getElementById('btnOpenPrintQuestions');
+  const btnCloseQuestionsPreview = document.getElementById('btnCloseQuestionsPreview');
+  const btnCancelQuestionsPreview = document.getElementById('btnCancelQuestionsPreview');
+  const btnDownloadQuestionsPdf = document.getElementById('btnDownloadQuestionsPdf');
+  const btnDownloadQuestionsDoc = document.getElementById('btnDownloadQuestionsDoc');
+  const btnExecuteDirectPrintQuestions = document.getElementById('btnExecuteDirectPrintQuestions');
+
+  function getSelectedQuestionsAndPaperOptions() {
+    const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+    const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+    const questions = window.cbtAdmin ? window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter) : [];
+
+    const cur = window.cbtAdmin ? window.cbtAdmin.getCurrentTeacher() : null;
+    const examCfg = window.examEngine ? window.examEngine.config : {};
+    const subjectName = (subjFilter && subjFilter !== 'ALL' && subjFilter !== 'UMUM')
+      ? subjFilter
+      : (cur && cur.role !== 'admin' ? cur.subject : (examCfg.subject || 'Semua Mata Pelajaran'));
+
+    const options = {
+      examTitle: document.getElementById('nqExamTitle')?.value.trim() || examCfg.examTitle || 'ASESMEN SUMATIF AKHIR SEMESTER (ASAS)',
+      semester: document.getElementById('nqSemester')?.value.trim() || 'SEMESTER GANJIL',
+      academicYear: document.getElementById('nqAcademicYear')?.value.trim() || '2025/2026',
+      duration: document.getElementById('nqDuration')?.value.trim() || `${examCfg.durationMinutes || 80} Menit`,
+      layoutCols: parseInt(document.getElementById('nqLayoutCols')?.value, 10) || 2,
+      dateText: document.getElementById('nqDateText')?.value.trim() || '',
+      includeAnswerKey: Boolean(document.getElementById('nqIncludeAnswerKey')?.checked),
+      subject: subjectName,
+      classLevel: classFilter !== 'ALL' ? classFilter : ''
+    };
+    return { questions, options };
+  }
+
+  function refreshQuestionsPaperPreview() {
+    const container = document.getElementById('questionsPaperPreviewContainer');
+    const countBadge = document.getElementById('questionsPreviewCountBadge');
+    const { questions, options } = getSelectedQuestionsAndPaperOptions();
+    if (countBadge) countBadge.innerText = `${questions.length} Soal (${options.subject})`;
+    if (!container) return;
+
+    if (questions.length === 0) {
+      container.innerHTML = `<div class="text-center py-14 text-slate-500 font-semibold text-sm bg-white rounded-2xl border border-slate-200">Belum ada butir soal pada mata pelajaran/kelas ini.</div>`;
+      return;
+    }
+    container.innerHTML = window.cbtAdmin.generateExamPaperHtml(questions, options);
+  }
+
+  if (btnOpenPrintQuestions) {
+    btnOpenPrintQuestions.addEventListener('click', () => {
+      const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+      const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+      const questions = window.cbtAdmin ? window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter) : [];
+      if (questions.length === 0) {
+        alert("Belum ada butir soal pada filter mata pelajaran/kelas ini. Tambahkan soal terlebih dahulu!");
+        return;
+      }
+
+      const examCfg = window.examEngine ? window.examEngine.config : {};
+      const titleInput = document.getElementById('nqExamTitle');
+      const durInput = document.getElementById('nqDuration');
+      const dateInput = document.getElementById('nqDateText');
+
+      if (titleInput && examCfg.examTitle) {
+        titleInput.value = examCfg.examTitle.toUpperCase();
+      }
+
+      // Cari jadwal yang cocok dengan mapel terpilih agar durasi & tanggal otomatis terisi rapi
+      const allSchedules = window.cbtAdmin ? window.cbtAdmin.getAllSchedules() : [];
+      const matchingSchedule = allSchedules.find(s =>
+        subjFilter !== 'ALL' &&
+        window.examEngine &&
+        window.examEngine.matchesSubject(s.subject, subjFilter) &&
+        (classFilter === 'ALL' || window.examEngine.matchesClassLevel(s.classLevel || 'Semua Kelas', classFilter))
+      );
+
+      if (durInput) {
+        const mins = matchingSchedule ? (matchingSchedule.durationMinutes || 80) : (examCfg.durationMinutes || 80);
+        durInput.value = `${mins} Menit`;
+      }
+      if (dateInput) {
+        if (matchingSchedule && (matchingSchedule.day || matchingSchedule.dateFormatted || matchingSchedule.dateIso)) {
+          const dStr = matchingSchedule.dateFormatted || (window.cbtAdmin ? window.cbtAdmin.formatIndonesianDate(matchingSchedule.dateIso) : '');
+          dateInput.value = [matchingSchedule.day, dStr].filter(Boolean).join(', ');
+        } else {
+          dateInput.value = '';
+        }
+      }
+
+      refreshQuestionsPaperPreview();
+      if (modalPrintQuestionsPreview) modalPrintQuestionsPreview.classList.remove('hidden');
+    });
+  }
+
+  ['nqExamTitle', 'nqSemester', 'nqAcademicYear', 'nqDuration', 'nqDateText', 'nqLayoutCols', 'nqIncludeAnswerKey'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', refreshQuestionsPaperPreview);
+      el.addEventListener('change', refreshQuestionsPaperPreview);
+    }
+  });
+
+  if (btnCloseQuestionsPreview) {
+    btnCloseQuestionsPreview.addEventListener('click', () => modalPrintQuestionsPreview && modalPrintQuestionsPreview.classList.add('hidden'));
+  }
+  if (btnCancelQuestionsPreview) {
+    btnCancelQuestionsPreview.addEventListener('click', () => modalPrintQuestionsPreview && modalPrintQuestionsPreview.classList.add('hidden'));
+  }
+  if (btnDownloadQuestionsPdf) {
+    btnDownloadQuestionsPdf.addEventListener('click', () => {
+      const { questions, options } = getSelectedQuestionsAndPaperOptions();
+      window.cbtAdmin.downloadQuestionsPDF(questions, options);
+    });
+  }
+  if (btnDownloadQuestionsDoc) {
+    btnDownloadQuestionsDoc.addEventListener('click', () => {
+      const { questions, options } = getSelectedQuestionsAndPaperOptions();
+      window.cbtAdmin.downloadQuestionsDOC(questions, options);
+    });
+  }
+  if (btnExecuteDirectPrintQuestions) {
+    btnExecuteDirectPrintQuestions.addEventListener('click', () => {
+      const { questions, options } = getSelectedQuestionsAndPaperOptions();
+      window.cbtAdmin.printQuestionsDirect(questions, options);
+    });
+  }
+
   const btnImportQuestions = document.getElementById('btnImportQuestions');
   const fileImportInput = document.getElementById('fileImportQuestions');
   if (btnImportQuestions && fileImportInput) {
