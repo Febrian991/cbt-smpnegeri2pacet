@@ -473,6 +473,12 @@ body.printing-questions #printableQuestionsArea .naskah-paper-sheet {
   max-width: 210mm !important;
   padding: 8mm 12mm !important;
 }
+.html2pdf__container {
+  left: 0 !important;
+  right: auto !important;
+  top: 0 !important;
+  margin: 0 !important;
+}
 .naskah-soal-item {
   break-inside: avoid;
   page-break-inside: avoid;

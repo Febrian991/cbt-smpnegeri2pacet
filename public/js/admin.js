@@ -1967,10 +1967,13 @@ class CBTAdmin {
       btnPdf.innerHTML = '<span>⏳ Membuat PDF...</span>';
     }
 
+    const prevScrollY = window.scrollY || window.pageYOffset || 0;
+    const prevScrollX = window.scrollX || window.pageXOffset || 0;
     const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
     const filename = `Naskah_Soal_F4_${slug}_${Date.now()}.pdf`;
 
     try {
+      window.scrollTo(0, 0);
       const tempWrapper = document.createElement('div');
       tempWrapper.innerHTML = this.generateExamPaperHtml(questionsList, options);
 
@@ -1995,8 +1998,16 @@ class CBTAdmin {
           logging: false,
           scrollX: 0,
           scrollY: 0,
-          windowWidth: 794,
-          backgroundColor: '#ffffff'
+          backgroundColor: '#ffffff',
+          onclone: (clonedDoc) => {
+            const container = clonedDoc.querySelector('.html2pdf__container');
+            if (container) {
+              container.style.left = '0px';
+              container.style.right = 'auto';
+              container.style.top = '0px';
+              container.style.margin = '0px';
+            }
+          }
         },
         jsPDF: { unit: 'mm', format: [210, 330], orientation: 'portrait' }
       };
@@ -2044,6 +2055,7 @@ class CBTAdmin {
       console.error("Gagal export Naskah PDF:", err);
       alert("Gagal mengunduh file PDF: " + (err && err.message ? err.message : "Terjadi kesalahan saat memproses PDF."));
     } finally {
+      window.scrollTo(prevScrollX, prevScrollY);
       if (btnPdf) {
         btnPdf.disabled = false;
         btnPdf.innerHTML = prevBtnHtml;
