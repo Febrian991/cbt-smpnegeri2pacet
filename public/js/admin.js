@@ -1923,38 +1923,64 @@ class CBTAdmin {
     return pagesHtml + keyHtml;
   }
 
+  measureImageDimensions(src) {
+    return new Promise((resolve) => {
+      if (!src) {
+        resolve({ width: 0, height: 0 });
+        return;
+      }
+      const img = new Image();
+      let settled = false;
+      const done = (w, h) => {
+        if (settled) return;
+        settled = true;
+        resolve({ width: w || 0, height: h || 0 });
+      };
+      const timer = setTimeout(() => done(img.naturalWidth || 0, img.naturalHeight || 0), 2500);
+      img.onload = () => {
+        clearTimeout(timer);
+        done(img.naturalWidth || img.width || 0, img.naturalHeight || img.height || 0);
+      };
+      img.onerror = () => {
+        clearTimeout(timer);
+        done(0, 0);
+      };
+      img.src = src;
+    });
+  }
+
   async downloadQuestionsPDF(questionsList, options = {}) {
     if (!questionsList || questionsList.length === 0) {
       alert("Tidak ada soal yang dipilih untuk didownload.");
       return;
     }
 
-    const printArea = document.getElementById('printableQuestionsArea');
-    if (!printArea) {
-      window.print();
+    if (typeof html2pdf === 'undefined') {
+      alert("Library pembuat PDF belum termuat. Silakan muat ulang halaman dan coba lagi.");
       return;
     }
 
-    const prevScrollY = window.scrollY || window.pageYOffset || 0;
-    const prevScrollX = window.scrollX || window.pageXOffset || 0;
+    const btnPdf = document.getElementById('btnDownloadQuestionsPdf');
+    const prevBtnHtml = btnPdf ? btnPdf.innerHTML : '';
+    if (btnPdf) {
+      btnPdf.disabled = true;
+      btnPdf.innerHTML = '<span>⏳ Membuat PDF...</span>';
+    }
+
     const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
     const filename = `Naskah_Soal_F4_${slug}_${Date.now()}.pdf`;
 
-    if (typeof html2pdf === 'undefined') {
-      this.printQuestionsDirect(questionsList, options);
-      return;
-    }
-
     try {
-      printArea.innerHTML = this.generateExamPaperHtml(questionsList, options);
-      printArea.classList.remove('hidden');
-      document.body.classList.add('printing-questions', 'exporting-questions-pdf');
-      window.scrollTo(0, 0);
+      const tempWrapper = document.createElement('div');
+      tempWrapper.innerHTML = this.generateExamPaperHtml(questionsList, options);
 
-      // Tunggu 1 frame render agar gambar & tabel terukur rapi di posisi (0,0)
-      await new Promise(resolve => setTimeout(resolve, 90));
+      // Pastikan semua gambar (Kop Surat & Soal Bergambar) selesai didekode sebelum capture
+      const imgs = Array.from(tempWrapper.querySelectorAll('img'));
+      if (imgs.length > 0) {
+        await Promise.all(imgs.map(img => this.measureImageDimensions(img.getAttribute('src') || '')));
+      }
 
-      const sheets = Array.from(printArea.querySelectorAll('.naskah-paper-sheet'));
+      const sheets = Array.from(tempWrapper.querySelectorAll('.naskah-paper-sheet'));
       if (sheets.length === 0) {
         throw new Error('Tidak ada halaman naskah untuk diexport.');
       }
@@ -1963,29 +1989,37 @@ class CBTAdmin {
         margin: [0, 0, 0, 0],
         filename,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, scrollX: 0, scrollY: 0, x: 0, y: 0, windowWidth: 794 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: 794,
+          backgroundColor: '#ffffff'
+        },
         jsPDF: { unit: 'mm', format: [210, 330], orientation: 'portrait' }
       };
 
-      // Buat objek PDF dasar F4 (210mm x 330mm) lalu render setiap sheet tepat dari atas (y=0) tanpa terpotong
-      const seedEl = document.createElement('div');
-      seedEl.style.width = '10px';
-      seedEl.style.height = '10px';
-      const pdfDoc = await html2pdf().set(sheetOpt).from(seedEl).toPdf().get('pdf');
+      // Inisialisasi dokumen jsPDF F4 (210mm x 330mm) tanpa menyembunyikan DOM body
+      const seedHtml = '<div style="width:10px;height:10px;background:#ffffff;"></div>';
+      const pdfDoc = await html2pdf().set(sheetOpt).from(seedHtml).toPdf().get('pdf');
 
       for (let i = 0; i < sheets.length; i++) {
         const sheet = sheets[i];
+        sheet.classList.remove('naskah-page-break');
         sheet.style.margin = '0';
         sheet.style.boxShadow = 'none';
         sheet.style.pageBreakBefore = 'auto';
         sheet.style.breakBefore = 'auto';
+        sheet.style.width = '210mm';
+        sheet.style.maxWidth = '210mm';
+        sheet.style.minHeight = 'auto';
+        sheet.style.padding = '8mm 12mm';
+        sheet.style.background = '#ffffff';
+        sheet.style.color = '#000000';
 
-        // Sembunyikan sheet lain selama capture per-halaman agar posisi Y selalu persis 0
-        sheets.forEach((s, sIdx) => {
-          s.style.display = sIdx === i ? 'block' : 'none';
-        });
-
-        const canvas = await html2pdf().set(sheetOpt).from(sheet).toCanvas().get('canvas');
+        const canvas = await html2pdf().set(sheetOpt).from(sheet.outerHTML).toCanvas().get('canvas');
         const imgData = canvas.toDataURL('image/jpeg', 0.98);
 
         if (i > 0) {
@@ -2008,49 +2042,144 @@ class CBTAdmin {
       pdfDoc.save(filename);
     } catch (err) {
       console.error("Gagal export Naskah PDF:", err);
-      this.printQuestionsDirect(questionsList, options);
+      alert("Gagal mengunduh file PDF: " + (err && err.message ? err.message : "Terjadi kesalahan saat memproses PDF."));
     } finally {
-      printArea.classList.add('hidden');
-      printArea.innerHTML = '';
-      document.body.classList.remove('printing-questions', 'exporting-questions-pdf');
-      window.scrollTo(prevScrollX, prevScrollY);
+      if (btnPdf) {
+        btnPdf.disabled = false;
+        btnPdf.innerHTML = prevBtnHtml;
+      }
     }
   }
 
-  downloadQuestionsDOC(questionsList, options = {}) {
+  async downloadQuestionsDOC(questionsList, options = {}) {
     if (!questionsList || questionsList.length === 0) {
       alert("Tidak ada soal yang dipilih untuk didownload.");
       return;
     }
-    const innerHtml = this.generateExamPaperHtml(questionsList, options);
-    const wordDocHtml = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office"
-            xmlns:w="urn:schemas-microsoft-com:office:word"
-            xmlns="http://www.w3.org/TR/REC-html40">
-      <head>
-        <meta charset="utf-8">
-        <title>Naskah Soal Ujian F4</title>
-        <style>
-          @page { size: 21cm 33cm; margin: 1cm 1.3cm; }
-          body { font-family: "Times New Roman", Times, serif; color: #000000; }
-          .naskah-paper-sheet { width: 100% !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; min-height: auto !important; }
-          .naskah-page-break { page-break-before: always; }
-          .cbt-print-footer-note { color: #1d4ed8 !important; font-style: italic !important; font-size: 8pt !important; white-space: nowrap !important; }
-        </style>
-      </head>
-      <body>${innerHtml}</body>
-      </html>
-    `;
-    const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
-    const blob = new Blob(['\ufeff', wordDocHtml], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Naskah_Soal_F4_${slug}_${Date.now()}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    const btnDoc = document.getElementById('btnDownloadQuestionsDoc');
+    const prevBtnHtml = btnDoc ? btnDoc.innerHTML : '';
+    if (btnDoc) {
+      btnDoc.disabled = true;
+      btnDoc.innerHTML = '<span>⏳ Membuat Word...</span>';
+    }
+
+    try {
+      const layoutCols = parseInt(options.layoutCols, 10) === 1 ? 1 : 2;
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = this.generateExamPaperHtml(questionsList, options);
+
+      // Bersihkan gaya khusus preview layar agar halaman Word F4 tidak double-margin/overflow
+      const sheets = Array.from(tempDiv.querySelectorAll('.naskah-paper-sheet'));
+      sheets.forEach((sheet, idx) => {
+        sheet.style.width = '100%';
+        sheet.style.maxWidth = '100%';
+        sheet.style.margin = '0';
+        sheet.style.padding = '0';
+        sheet.style.boxShadow = 'none';
+        sheet.style.minHeight = 'auto';
+        sheet.style.background = '#ffffff';
+        if (idx > 0) {
+          sheet.style.pageBreakBefore = 'always';
+          sheet.style.breakBefore = 'page';
+        }
+      });
+
+      // Microsoft Word membutuhkan atribut HTML width & height eksplisit pada <img>
+      // agar gambar tidak dirender dalam ukuran pixel aslinya yang meluber keluar margin kanan.
+      const imgs = Array.from(tempDiv.querySelectorAll('img'));
+      for (const img of imgs) {
+        const alt = String(img.getAttribute('alt') || '');
+        const src = img.getAttribute('src') || '';
+        const dims = await this.measureImageDimensions(src);
+        const natW = dims.width || 800;
+        const natH = dims.height || 200;
+
+        if (alt === 'Kop Surat Sekolah') {
+          const maxW = 665;
+          const maxH = 105;
+          const ratio = Math.min(maxW / natW, maxH / natH, 1);
+          const targetW = Math.max(1, Math.round(natW * ratio));
+          const targetH = Math.max(1, Math.round(natH * ratio));
+          img.setAttribute('width', String(targetW));
+          img.setAttribute('height', String(targetH));
+          img.style.width = `${targetW}px`;
+          img.style.height = `${targetH}px`;
+          img.style.maxWidth = '100%';
+          img.style.objectFit = 'contain';
+        } else if (alt === 'Logo Sekolah') {
+          img.setAttribute('width', '64');
+          img.setAttribute('height', '64');
+          img.style.width = '64px';
+          img.style.height = '64px';
+        } else {
+          const maxW = layoutCols === 2 ? 265 : 540;
+          const maxH = layoutCols === 2 ? 132 : 210;
+          const ratio = Math.min(maxW / natW, maxH / natH, 1);
+          const targetW = Math.max(1, Math.round(natW * ratio));
+          const targetH = Math.max(1, Math.round(natH * ratio));
+          img.setAttribute('width', String(targetW));
+          img.setAttribute('height', String(targetH));
+          img.style.width = `${targetW}px`;
+          img.style.height = `${targetH}px`;
+        }
+      }
+
+      const cleanedHtml = tempDiv.innerHTML;
+      const wordDocHtml = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office"
+              xmlns:w="urn:schemas-microsoft-com:office:word"
+              xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+          <meta charset="utf-8">
+          <title>Naskah Soal Ujian F4</title>
+          <!--[if gte mso 9]>
+          <xml>
+            <w:WordDocument>
+              <w:View>Print</w:View>
+              <w:Zoom>100</w:Zoom>
+              <w:DoNotOptimizeForBrowser/>
+            </w:WordDocument>
+          </xml>
+          <![endif]-->
+          <style>
+            @page Section1 {
+              size: 21.0cm 33.0cm;
+              mso-page-orientation: portrait;
+              margin: 1.0cm 1.2cm 1.0cm 1.2cm;
+              mso-header-margin: 0.5cm;
+              mso-footer-margin: 0.5cm;
+              mso-paper-source: 0;
+            }
+            div.Section1 { page: Section1; }
+            body { font-family: "Times New Roman", Times, serif; color: #000000; margin: 0; padding: 0; }
+            .naskah-paper-sheet { width: 100% !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; min-height: auto !important; }
+            .naskah-page-break { page-break-before: always; break-before: page; }
+            .cbt-print-footer-note { color: #1d4ed8 !important; font-style: italic !important; font-size: 8pt !important; white-space: nowrap !important; }
+          </style>
+        </head>
+        <body><div class="Section1">${cleanedHtml}</div></body>
+        </html>
+      `;
+      const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
+      const blob = new Blob(['\ufeff', wordDocHtml], { type: 'application/msword;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Naskah_Soal_F4_${slug}_${Date.now()}.doc`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error("Gagal export Naskah Word:", err);
+      alert("Gagal mengunduh file Word: " + (err && err.message ? err.message : "Terjadi kesalahan."));
+    } finally {
+      if (btnDoc) {
+        btnDoc.disabled = false;
+        btnDoc.innerHTML = prevBtnHtml;
+      }
+    }
   }
 
   printQuestionsDirect(questionsList, options = {}) {

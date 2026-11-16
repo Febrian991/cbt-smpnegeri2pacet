@@ -473,25 +473,6 @@ body.printing-questions #printableQuestionsArea .naskah-paper-sheet {
   max-width: 210mm !important;
   padding: 8mm 12mm !important;
 }
-body.exporting-questions-pdf > *:not(#printableQuestionsArea) {
-  display: none !important;
-}
-body.exporting-questions-pdf {
-  background: #ffffff !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: visible !important;
-}
-body.exporting-questions-pdf #printableQuestionsArea {
-  display: block !important;
-  position: relative !important;
-  top: 0 !important;
-  left: 0 !important;
-  width: 210mm !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  background: #ffffff !important;
-}
 .naskah-soal-item {
   break-inside: avoid;
   page-break-inside: avoid;
@@ -509,6 +490,9 @@ body.exporting-questions-pdf #printableQuestionsArea {
 @media screen {
   html.dark .cbt-print-footer-note {
     color: #60a5fa !important;
+  }
+  html.dark .naskah-paper-sheet .cbt-print-footer-note {
+    color: #1d4ed8 !important;
   }
 }
 
