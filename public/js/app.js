@@ -3210,6 +3210,88 @@ document.addEventListener('DOMContentLoaded', () => {
       syncNqKopUi();
       refreshQuestionsPaperPreview();
       if (modalPrintQuestionsPreview) modalPrintQuestionsPreview.classList.remove('hidden');
+      ensureSavedKopTrimmed();
+    });
+  }
+
+  function trimKopSuratWhitespace(sourceDataUrlOrFile, maxWidth, callback) {
+    const processImageSrc = (src) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = img.width > maxWidth ? (maxWidth / img.width) : 1;
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+
+        try {
+          const imgData = ctx.getImageData(0, 0, w, h).data;
+          let minX = w, minY = h, maxX = -1, maxY = -1;
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              const idx = (y * w + x) * 4;
+              const r = imgData[idx];
+              const g = imgData[idx + 1];
+              const b = imgData[idx + 2];
+              const a = imgData[idx + 3];
+              if (a > 15 && (r < 245 || g < 245 || b < 245)) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+
+          if (maxX >= minX && maxY >= minY) {
+            const pad = 4;
+            const cx = Math.max(0, minX - pad);
+            const cy = Math.max(0, minY - pad);
+            const cw = Math.min(w - cx, (maxX - minX + 1) + pad * 2);
+            const ch = Math.min(h - cy, (maxY - minY + 1) + pad * 2);
+
+            const trimmedCanvas = document.createElement('canvas');
+            trimmedCanvas.width = cw;
+            trimmedCanvas.height = ch;
+            const tCtx = trimmedCanvas.getContext('2d');
+            tCtx.fillStyle = '#ffffff';
+            tCtx.fillRect(0, 0, cw, ch);
+            tCtx.drawImage(canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+            callback(trimmedCanvas.toDataURL('image/png'), cw !== w || ch !== h);
+            return;
+          }
+        } catch (e) {}
+
+        callback(canvas.toDataURL('image/png'), false);
+      };
+      img.src = src;
+    };
+
+    if (typeof sourceDataUrlOrFile === 'string') {
+      processImageSrc(sourceDataUrlOrFile);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => processImageSrc(ev.target.result);
+      reader.readAsDataURL(sourceDataUrlOrFile);
+    }
+  }
+
+  function ensureSavedKopTrimmed() {
+    if (!window.cbtAdmin) return;
+    const cfg = window.cbtAdmin.getSchoolConfig();
+    if (!cfg.kopSuratImage || String(cfg.kopSuratImage).trim() === '') return;
+    trimKopSuratWhitespace(cfg.kopSuratImage, 1600, (trimmedUrl, changed) => {
+      if (changed && trimmedUrl) {
+        const latestCfg = window.cbtAdmin.getSchoolConfig();
+        latestCfg.kopSuratImage = trimmedUrl;
+        window.cbtAdmin.saveSchoolConfig(latestCfg);
+        refreshQuestionsPaperPreview();
+      }
     });
   }
 
@@ -3242,7 +3324,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (file) alert("Harap pilih file gambar (PNG, JPG, atau WEBP) untuk Kop Surat.");
         return;
       }
-      compressImageFile(file, 1400, 0.92, true, (dataUrl) => {
+      trimKopSuratWhitespace(file, 1600, (dataUrl) => {
         if (window.cbtAdmin) {
           const cfg = window.cbtAdmin.getSchoolConfig();
           cfg.kopSuratImage = dataUrl;

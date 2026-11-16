@@ -1617,22 +1617,24 @@ class CBTAdmin {
       const stmts = Array.isArray(q.statements) ? q.statements : [];
       const rows = stmts.map((st, idx) => `
         <tr>
-          <td style="border:1px solid #334155; padding:3px 5px; font-size:10px; line-height:1.35;">${idx + 1}. ${this.escapePrintHtml(st.text || '')}</td>
-          <td style="border:1px solid #334155; padding:3px 4px; width:24px; text-align:center; font-size:10px;"></td>
-          <td style="border:1px solid #334155; padding:3px 4px; width:24px; text-align:center; font-size:10px;"></td>
+          <td style="border:1px solid #000000; padding:3px 5px; font-size:10px; line-height:1.35;">${idx + 1}. ${this.escapePrintHtml(st.text || '')}</td>
+          <td style="border:1px solid #000000; padding:3px 4px; width:24px; text-align:center; font-size:10px;"></td>
+          <td style="border:1px solid #000000; padding:3px 4px; width:24px; text-align:center; font-size:10px;"></td>
         </tr>
       `).join('');
       bodyHtml = `
-        <table style="width:100%; border-collapse:collapse; margin-top:4px; margin-bottom:2px;">
-          <thead>
-            <tr style="background:#f1f5f9;">
-              <th style="border:1px solid #334155; padding:3px 5px; font-size:9.5px; text-align:left;">Pernyataan</th>
-              <th style="border:1px solid #334155; padding:3px 4px; width:24px; font-size:9.5px; text-align:center;">B</th>
-              <th style="border:1px solid #334155; padding:3px 4px; width:24px; font-size:9.5px; text-align:center;">S</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <div style="padding:3px 1px 5px 1px;">
+          <table style="width:100%; border-collapse:collapse; border:1px solid #000000;">
+            <thead>
+              <tr style="background:#f1f5f9;">
+                <th style="border:1px solid #000000; padding:3px 5px; font-size:9.5px; text-align:left;">Pernyataan</th>
+                <th style="border:1px solid #000000; padding:3px 4px; width:24px; font-size:9.5px; text-align:center;">B</th>
+                <th style="border:1px solid #000000; padding:3px 4px; width:24px; font-size:9.5px; text-align:center;">S</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
       `;
     } else {
       const opts = Array.isArray(q.options) ? q.options : [];
@@ -1650,7 +1652,7 @@ class CBTAdmin {
     }
 
     return `
-      <div class="naskah-soal-item" style="margin-bottom:8px; break-inside:avoid; page-break-inside:avoid;">
+      <div class="naskah-soal-item" style="margin-bottom:7px; padding-bottom:3px; break-inside:avoid; page-break-inside:avoid;">
         <table style="width:100%; border-collapse:collapse;">
           <tbody>
             <tr>
@@ -1692,27 +1694,27 @@ class CBTAdmin {
     const kopBannerHtml = (customKopImg && String(customKopImg).trim() !== '')
       ? `
         <!-- KOP SURAT GAMBAR UPLOAD RESMI -->
-        <div style="width:100%; margin-bottom:8px; text-align:center;">
-          <img src="${customKopImg}" alt="Kop Surat Sekolah" style="width:100%; max-height:118px; height:auto; object-fit:contain; display:block; margin:0 auto;">
+        <div style="width:100%; margin:0 0 6px 0; padding:0; text-align:center;">
+          <img src="${customKopImg}" alt="Kop Surat Sekolah" style="width:100%; max-height:105px; height:auto; object-fit:contain; display:block; margin:0 auto;">
         </div>
       `
       : `
         <!-- KOP SURAT OTOMATIS -->
-        <table style="width:100%; border-collapse:collapse; margin-bottom:2px;">
+        <table style="width:100%; border-collapse:collapse; margin:0 0 2px 0;">
           <tbody>
             <tr>
-              <td style="width:78px; vertical-align:middle; text-align:left; padding-bottom:6px;">
+              <td style="width:74px; vertical-align:middle; text-align:left; padding-bottom:5px;">
                 ${logoHtml}
               </td>
-              <td style="vertical-align:middle; text-align:center; padding-bottom:6px; padding-right:24px;">
-                <div style="font-size:13px; font-weight:normal; letter-spacing:0.4px; text-transform:uppercase; line-height:1.2;">${this.escapePrintHtml(cfg.schoolSubtitle || 'PEMERINTAH KABUPATEN CIANJUR')}</div>
-                <div style="font-size:18px; font-weight:bold; letter-spacing:0.6px; text-transform:uppercase; line-height:1.25; margin-top:1px;">${this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET')}</div>
-                <div style="font-size:10px; line-height:1.3; margin-top:2px;">${this.escapePrintHtml(cfg.schoolAddress || '')}</div>
+              <td style="vertical-align:middle; text-align:center; padding-bottom:5px; padding-right:20px;">
+                <div style="font-size:12.5px; font-weight:normal; letter-spacing:0.4px; text-transform:uppercase; line-height:1.2;">${this.escapePrintHtml(cfg.schoolSubtitle || 'PEMERINTAH KABUPATEN CIANJUR')}</div>
+                <div style="font-size:17.5px; font-weight:bold; letter-spacing:0.6px; text-transform:uppercase; line-height:1.22; margin-top:1px;">${this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET')}</div>
+                <div style="font-size:10px; line-height:1.28; margin-top:2px;">${this.escapePrintHtml(cfg.schoolAddress || '')}</div>
               </td>
             </tr>
           </tbody>
         </table>
-        <div style="border-top:2.5px solid #000000; border-bottom:1px solid #000000; height:2px; margin-bottom:8px;"></div>
+        <div style="border-top:2.5px solid #000000; border-bottom:1px solid #000000; height:2px; margin-bottom:6px;"></div>
       `;
 
     const kopAndMetaHtml = `
@@ -1832,7 +1834,7 @@ class CBTAdmin {
     let pageNum = 0;
 
     while (idx < blocks.length) {
-      const colLimit = pageNum === 0 ? 730 : 1050;
+      const colLimit = pageNum === 0 ? 685 : 995;
       if (layoutCols === 1) {
         let used = 0;
         const colItems = [];
@@ -1873,21 +1875,21 @@ class CBTAdmin {
       const breakStyle = pIndex > 0 ? 'page-break-before:always; break-before:page;' : '';
       const breakClass = pIndex > 0 ? 'naskah-page-break' : '';
       const bodyLayout = layoutCols === 1
-        ? `<div>${pg.leftHtml}</div>`
+        ? `<div style="padding-bottom:4px;">${pg.leftHtml}</div>`
         : `
           <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
             <tbody>
               <tr>
-                <td style="width:48.5%; vertical-align:top; padding-right:10px;">${pg.leftHtml}</td>
+                <td style="width:48.5%; vertical-align:top; padding-right:10px; padding-bottom:4px;">${pg.leftHtml}</td>
                 <td style="width:3%;"></td>
-                <td style="width:48.5%; vertical-align:top; padding-left:10px;">${pg.rightHtml}</td>
+                <td style="width:48.5%; vertical-align:top; padding-left:10px; padding-bottom:4px;">${pg.rightHtml}</td>
               </tr>
             </tbody>
           </table>
         `;
 
       return `
-        <div class="naskah-paper-sheet ${breakClass}" style="${breakStyle} width:210mm; max-width:100%; margin:0 auto 14px auto; padding:10mm 13mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
+        <div class="naskah-paper-sheet ${breakClass}" style="${breakStyle} width:210mm; max-width:100%; margin:0 auto 14px auto; padding:8mm 12mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
           ${pIndex === 0 ? kopAndMetaHtml : ''}
           ${bodyLayout}
           ${footerNoteHtml}
@@ -1905,7 +1907,7 @@ class CBTAdmin {
         </div>
       `).join('');
       keyHtml = `
-        <div class="naskah-paper-sheet naskah-page-break" style="page-break-before:always; break-before:page; width:210mm; max-width:100%; margin:0 auto 14px auto; padding:10mm 13mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
+        <div class="naskah-paper-sheet naskah-page-break" style="page-break-before:always; break-before:page; width:210mm; max-width:100%; margin:0 auto 14px auto; padding:8mm 12mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
           <div style="text-align:center; border-bottom:2px solid #000000; padding-bottom:6px; margin-bottom:12px;">
             <div style="font-size:13px; font-weight:bold; text-transform:uppercase;">KUNCI JAWABAN • ${this.escapePrintHtml(subjectName)}</div>
             <div style="font-size:11px;">${this.escapePrintHtml(examTitle)} (${this.escapePrintHtml(semester)} ${this.escapePrintHtml(academicYear)})</div>
@@ -1921,7 +1923,7 @@ class CBTAdmin {
     return pagesHtml + keyHtml;
   }
 
-  downloadQuestionsPDF(questionsList, options = {}) {
+  async downloadQuestionsPDF(questionsList, options = {}) {
     if (!questionsList || questionsList.length === 0) {
       alert("Tidak ada soal yang dipilih untuk didownload.");
       return;
@@ -1933,34 +1935,85 @@ class CBTAdmin {
       return;
     }
 
-    printArea.innerHTML = this.generateExamPaperHtml(questionsList, options);
-    printArea.classList.remove('hidden');
-    document.body.classList.add('printing-questions');
-
+    const prevScrollY = window.scrollY || window.pageYOffset || 0;
+    const prevScrollX = window.scrollX || window.pageXOffset || 0;
     const slug = String(options.subject || 'Naskah_Soal').replace(/[^a-z0-9]+/gi, '_');
-    if (typeof html2pdf !== 'undefined') {
-      const opt = {
+    const filename = `Naskah_Soal_F4_${slug}_${Date.now()}.pdf`;
+
+    if (typeof html2pdf === 'undefined') {
+      this.printQuestionsDirect(questionsList, options);
+      return;
+    }
+
+    try {
+      printArea.innerHTML = this.generateExamPaperHtml(questionsList, options);
+      printArea.classList.remove('hidden');
+      document.body.classList.add('printing-questions', 'exporting-questions-pdf');
+      window.scrollTo(0, 0);
+
+      // Tunggu 1 frame render agar gambar & tabel terukur rapi di posisi (0,0)
+      await new Promise(resolve => setTimeout(resolve, 90));
+
+      const sheets = Array.from(printArea.querySelectorAll('.naskah-paper-sheet'));
+      if (sheets.length === 0) {
+        throw new Error('Tidak ada halaman naskah untuk diexport.');
+      }
+
+      const sheetOpt = {
         margin: [0, 0, 0, 0],
-        filename: `Naskah_Soal_F4_${slug}_${Date.now()}.pdf`,
+        filename,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: [210, 330], orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'], before: '.naskah-page-break', avoid: '.naskah-soal-item' }
+        html2canvas: { scale: 2, useCORS: true, logging: false, scrollX: 0, scrollY: 0, x: 0, y: 0, windowWidth: 794 },
+        jsPDF: { unit: 'mm', format: [210, 330], orientation: 'portrait' }
       };
 
-      html2pdf().set(opt).from(printArea).save().then(() => {
-        printArea.classList.add('hidden');
-        document.body.classList.remove('printing-questions');
-      }).catch(err => {
-        console.error("Gagal export Naskah PDF:", err);
-        window.print();
-        setTimeout(() => {
-          printArea.classList.add('hidden');
-          document.body.classList.remove('printing-questions');
-        }, 1000);
-      });
-    } else {
+      // Buat objek PDF dasar F4 (210mm x 330mm) lalu render setiap sheet tepat dari atas (y=0) tanpa terpotong
+      const seedEl = document.createElement('div');
+      seedEl.style.width = '10px';
+      seedEl.style.height = '10px';
+      const pdfDoc = await html2pdf().set(sheetOpt).from(seedEl).toPdf().get('pdf');
+
+      for (let i = 0; i < sheets.length; i++) {
+        const sheet = sheets[i];
+        sheet.style.margin = '0';
+        sheet.style.boxShadow = 'none';
+        sheet.style.pageBreakBefore = 'auto';
+        sheet.style.breakBefore = 'auto';
+
+        // Sembunyikan sheet lain selama capture per-halaman agar posisi Y selalu persis 0
+        sheets.forEach((s, sIdx) => {
+          s.style.display = sIdx === i ? 'block' : 'none';
+        });
+
+        const canvas = await html2pdf().set(sheetOpt).from(sheet).toCanvas().get('canvas');
+        const imgData = canvas.toDataURL('image/jpeg', 0.98);
+
+        if (i > 0) {
+          pdfDoc.addPage([210, 330], 'portrait');
+        }
+
+        const pageW = 210;
+        const maxPageH = 328;
+        const naturalH = (canvas.height * pageW) / canvas.width;
+        if (naturalH > maxPageH) {
+          const ratio = maxPageH / naturalH;
+          const fitW = pageW * ratio;
+          const offsetX = (pageW - fitW) / 2;
+          pdfDoc.addImage(imgData, 'JPEG', offsetX, 0, fitW, maxPageH);
+        } else {
+          pdfDoc.addImage(imgData, 'JPEG', 0, 0, pageW, naturalH);
+        }
+      }
+
+      pdfDoc.save(filename);
+    } catch (err) {
+      console.error("Gagal export Naskah PDF:", err);
       this.printQuestionsDirect(questionsList, options);
+    } finally {
+      printArea.classList.add('hidden');
+      printArea.innerHTML = '';
+      document.body.classList.remove('printing-questions', 'exporting-questions-pdf');
+      window.scrollTo(prevScrollX, prevScrollY);
     }
   }
 
