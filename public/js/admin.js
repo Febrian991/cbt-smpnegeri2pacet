@@ -1576,7 +1576,7 @@ class CBTAdmin {
   }
 
   estimateQuestionHeightPx(q, layoutCols = 2) {
-    const charsPerLine = layoutCols === 2 ? 42 : 90;
+    const charsPerLine = layoutCols === 2 ? 56 : 112;
     const text = String(q.question || '');
     const explicitLines = text.split(/\r?\n/);
     let stemLines = 0;
@@ -1584,9 +1584,9 @@ class CBTAdmin {
       stemLines += Math.max(1, Math.ceil(line.length / charsPerLine));
     });
 
-    let h = 14 + stemLines * 15;
+    let h = 10 + stemLines * 14.5;
     if (q.image && String(q.image).trim() !== '') {
-      h += layoutCols === 2 ? 148 : 225;
+      h += layoutCols === 2 ? 142 : 220;
     }
 
     const type = q.type || 'single';
@@ -1594,14 +1594,16 @@ class CBTAdmin {
       const stmts = Array.isArray(q.statements) ? q.statements : [];
       h += 28 + stmts.length * 24;
     } else {
-      const opts = Array.isArray(q.options) ? q.options : [];
-      const optCharsPerLine = layoutCols === 2 ? 36 : 82;
+      const rawOpts = Array.isArray(q.options) ? q.options : [];
+      const nonEmptyOpts = rawOpts.filter(opt => String(opt && opt.text ? opt.text : '').trim() !== '');
+      const opts = nonEmptyOpts.length > 0 ? nonEmptyOpts : rawOpts;
+      const optCharsPerLine = layoutCols === 2 ? 50 : 104;
       opts.forEach(opt => {
         const oLen = String(opt.text || '').length;
-        h += Math.max(1, Math.ceil(oLen / optCharsPerLine)) * 14 + 3;
+        h += Math.max(1, Math.ceil(oLen / optCharsPerLine)) * 14.5 + 2;
       });
     }
-    return h + 10;
+    return Math.ceil(h + 8);
   }
 
   renderSingleQuestionPrintHtml(q, displayNumber, layoutCols = 2) {
@@ -1637,7 +1639,9 @@ class CBTAdmin {
         </div>
       `;
     } else {
-      const opts = Array.isArray(q.options) ? q.options : [];
+      const rawOpts = Array.isArray(q.options) ? q.options : [];
+      const nonEmptyOpts = rawOpts.filter(opt => String(opt && opt.text ? opt.text : '').trim() !== '');
+      const opts = nonEmptyOpts.length > 0 ? nonEmptyOpts : rawOpts;
       const optRows = opts.map(opt => {
         const lowerKey = String(opt.key || 'a').toLowerCase();
         const bullet = type === 'multiple' ? `☐ ${lowerKey}.` : `${lowerKey}.`;
@@ -1828,23 +1832,32 @@ class CBTAdmin {
       });
     }
 
+    // Ukur tinggi aktual kop & setiap blok soal di lebar kertas F4 (210mm) agar halaman terisi penuh & rapi
+    const measured = this.measureExamPaperLayout(kopAndMetaHtml, blocks, layoutCols);
+    const blockHeights = measured.blockHeights;
+    const pageBudgetPx = 1110; // 330mm (~1247px) - padding 16mm (60px) - footer (28px) - margin aman (49px)
+    const firstPageColLimit = Math.max(460, pageBudgetPx - measured.kopHeight);
+    const nextPageColLimit = pageBudgetPx;
+
     // Bagi blok ke halaman F4 (21cm x 33cm) agar rapi, tidak memotong soal bergambar di tengah kolom/halaman
     const pages = [];
     let idx = 0;
     let pageNum = 0;
 
     while (idx < blocks.length) {
-      const colLimit = pageNum === 0 ? 685 : 995;
+      const colLimit = pageNum === 0 ? firstPageColLimit : nextPageColLimit;
       if (layoutCols === 1) {
         let used = 0;
         const colItems = [];
         while (idx < blocks.length) {
           const b = blocks[idx];
-          if (colItems.length > 0 && used + b.height > colLimit) break;
+          const bh = blockHeights[idx] || b.height;
+          if (colItems.length > 0 && used + bh > colLimit) break;
           // Jangan tinggalkan heading sendirian di bawah halaman
-          if (b.isHeading && idx + 1 < blocks.length && colItems.length > 0 && used + b.height + blocks[idx + 1].height > colLimit) break;
+          const nextBh = idx + 1 < blocks.length ? (blockHeights[idx + 1] || blocks[idx + 1].height) : 0;
+          if (b.isHeading && idx + 1 < blocks.length && colItems.length > 0 && used + bh + nextBh > colLimit) break;
           colItems.push(b.html);
-          used += b.height;
+          used += bh;
           idx += 1;
         }
         pages.push({ pageNum, leftHtml: colItems.join(''), rightHtml: '' });
@@ -1854,10 +1867,12 @@ class CBTAdmin {
           const items = [];
           while (idx < blocks.length) {
             const b = blocks[idx];
-            if (items.length > 0 && used + b.height > colLimit) break;
-            if (b.isHeading && idx + 1 < blocks.length && items.length > 0 && used + b.height + blocks[idx + 1].height > colLimit) break;
+            const bh = blockHeights[idx] || b.height;
+            if (items.length > 0 && used + bh > colLimit) break;
+            const nextBh = idx + 1 < blocks.length ? (blockHeights[idx + 1] || blocks[idx + 1].height) : 0;
+            if (b.isHeading && idx + 1 < blocks.length && items.length > 0 && used + bh + nextBh > colLimit) break;
             items.push(b.html);
-            used += b.height;
+            used += bh;
             idx += 1;
           }
           return items.join('');
@@ -1923,6 +1938,64 @@ class CBTAdmin {
     return pagesHtml + keyHtml;
   }
 
+  measureExamPaperLayout(kopAndMetaHtml, blocks, layoutCols = 2) {
+    if (typeof document === 'undefined' || !document.body) {
+      return {
+        kopHeight: 335,
+        blockHeights: blocks.map(b => b.height)
+      };
+    }
+
+    const measurer = document.createElement('div');
+    measurer.style.cssText = 'position:fixed; left:-99999px; top:0; width:210mm; padding:8mm 12mm; box-sizing:border-box; visibility:hidden; pointer-events:none; font-family:"Times New Roman", Times, Georgia, serif; background:#ffffff; z-index:-1;';
+
+    const colInnerHtml = layoutCols === 1
+      ? `<div class="_m_col" style="width:100%;"></div>`
+      : `<table style="width:100%; border-collapse:collapse; table-layout:fixed;"><tbody><tr><td class="_m_col" style="width:48.5%; vertical-align:top; padding-right:10px;"></td><td style="width:3%;"></td><td style="width:48.5%; vertical-align:top; padding-left:10px;"></td></tr></tbody></table>`;
+
+    const blocksMarkup = blocks.map((b, i) => `<div class="_m_blk" data-bidx="${i}" style="display:flow-root;">${b.html}</div>`).join('');
+
+    measurer.innerHTML = `<div class="_m_kop" style="display:flow-root;">${kopAndMetaHtml}</div>${colInnerHtml}`;
+    const colEl = measurer.querySelector('._m_col');
+    if (colEl) colEl.innerHTML = blocksMarkup;
+
+    let kopHeight = 335;
+    let blockHeights = blocks.map(b => b.height);
+
+    try {
+      document.body.appendChild(measurer);
+      const kopEl = measurer.querySelector('._m_kop');
+      if (kopEl) {
+        let kh = kopEl.getBoundingClientRect().height || kopEl.offsetHeight || 335;
+        const kopImg = kopEl.querySelector('img');
+        if (kopImg && (kopImg.getBoundingClientRect().height || kopImg.offsetHeight) < 20) {
+          kh += 105;
+        }
+        kopHeight = Math.max(240, Math.ceil(kh));
+      }
+
+      const blkEls = measurer.querySelectorAll('._m_blk');
+      if (blkEls.length === blocks.length) {
+        blockHeights = Array.from(blkEls).map((el, i) => {
+          let h = el.getBoundingClientRect().height || el.offsetHeight || blocks[i].height;
+          const imgs = el.querySelectorAll('img');
+          imgs.forEach(img => {
+            if ((img.getBoundingClientRect().height || img.offsetHeight) < 16) {
+              h += (layoutCols === 2 ? 136 : 214);
+            }
+          });
+          return Math.max(16, Math.ceil(h));
+        });
+      }
+    } catch (e) {
+      // Gunakan fallback estimateQuestionHeightPx jika pengukuran DOM gagal
+    } finally {
+      if (measurer.parentNode) measurer.parentNode.removeChild(measurer);
+    }
+
+    return { kopHeight, blockHeights };
+  }
+
   measureImageDimensions(src) {
     return new Promise((resolve) => {
       if (!src) {
@@ -1947,6 +2020,21 @@ class CBTAdmin {
       };
       img.src = src;
     });
+  }
+
+  async preloadPaperImages(questionsList, options = {}) {
+    const cfg = this.getSchoolConfig();
+    const urls = new Set();
+    const customKop = options.kopSuratImage !== undefined ? options.kopSuratImage : (cfg.kopSuratImage || '');
+    if (customKop) urls.add(customKop);
+    if (cfg.logoLeft) urls.add(cfg.logoLeft);
+    if (cfg.logoRight) urls.add(cfg.logoRight);
+    (questionsList || []).forEach(q => {
+      if (q && q.image && String(q.image).trim() !== '') urls.add(q.image);
+    });
+    if (urls.size > 0) {
+      await Promise.all(Array.from(urls).map(u => this.measureImageDimensions(u)));
+    }
   }
 
   async downloadQuestionsPDF(questionsList, options = {}) {
@@ -1974,14 +2062,9 @@ class CBTAdmin {
 
     try {
       window.scrollTo(0, 0);
+      await this.preloadPaperImages(questionsList, options);
       const tempWrapper = document.createElement('div');
       tempWrapper.innerHTML = this.generateExamPaperHtml(questionsList, options);
-
-      // Pastikan semua gambar (Kop Surat & Soal Bergambar) selesai didekode sebelum capture
-      const imgs = Array.from(tempWrapper.querySelectorAll('img'));
-      if (imgs.length > 0) {
-        await Promise.all(imgs.map(img => this.measureImageDimensions(img.getAttribute('src') || '')));
-      }
 
       const sheets = Array.from(tempWrapper.querySelectorAll('.naskah-paper-sheet'));
       if (sheets.length === 0) {
