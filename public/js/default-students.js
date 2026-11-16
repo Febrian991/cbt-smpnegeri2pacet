@@ -534,6 +534,20 @@ class StudentManager {
     }).join('');
   }
 
+  getCardsFooterNote() {
+    if (typeof window !== 'undefined' && window.cbtAdmin && typeof window.cbtAdmin.getPrintStampText === 'function') {
+      return window.cbtAdmin.getPrintStampText();
+    }
+    const now = new Date();
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const d = now.getDate();
+    const m = months[now.getMonth()];
+    const y = now.getFullYear();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    return `Dokumen ini dicetak secara otomatis melalui sistem aplikasi CBT - Computer Based Test. pada ${d} ${m} ${y} pukul ${hh}:${mm} WIB.`;
+  }
+
   printExamCards(studentsToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
     const printArea = document.getElementById('printableCardsArea');
     if (!printArea) return;
@@ -546,6 +560,7 @@ class StudentManager {
 
     const cardsHtml = this.generateCardsHtml(list, examTitle);
     const cfg = this.getSchoolConfig();
+    const stampText = this.getCardsFooterNote();
 
     printArea.innerHTML = `
       <div style="width:100%; max-width:210mm; margin:0 auto; padding:4mm; font-family:'Plus Jakarta Sans', Arial, sans-serif; background:#ffffff;">
@@ -556,6 +571,7 @@ class StudentManager {
         <div class="cards-grid-print" style="display:grid; grid-template-columns: repeat(2, 9.0cm); justify-content:center; gap:6mm 6mm;">
           ${cardsHtml}
         </div>
+        <div class="cbt-print-footer-note" style="margin-top:10px; padding-top:4px; border-top:0.5px solid #cbd5e1; font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${stampText}</div>
       </div>
     `;
 
@@ -583,6 +599,7 @@ class StudentManager {
 
     const cardsHtml = this.generateCardsHtml(list, examTitle);
     const cfg = this.getSchoolConfig();
+    const stampText = this.getCardsFooterNote();
 
     printArea.innerHTML = `
       <div id="pdfCardsWrapper" style="width:100%; max-width:200mm; margin:0 auto; padding:5mm; font-family:'Plus Jakarta Sans', Arial, sans-serif; background:#ffffff;">
@@ -593,6 +610,7 @@ class StudentManager {
         <div style="display:grid; grid-template-columns: repeat(2, 9.0cm); justify-content:center; gap:5mm 5mm;">
           ${cardsHtml}
         </div>
+        <div class="cbt-print-footer-note" style="margin-top:10px; padding-top:4px; border-top:0.5px solid #cbd5e1; font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${stampText}</div>
       </div>
     `;
 

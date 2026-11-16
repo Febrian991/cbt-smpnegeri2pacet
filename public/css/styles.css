@@ -414,7 +414,11 @@ body.exam-locked img {
     visibility: visible !important;
   }
 
-  /* 4. CETAK NASKAH SOAL UJIAN FORMAT SEKOLAH */
+  /* 4. CETAK NASKAH SOAL UJIAN FORMAT SEKOLAH (UKURAN F4 21cm x 33cm) */
+  @page naskahF4 {
+    size: 21cm 33cm;
+    margin: 8mm 10mm;
+  }
   body.printing-questions > *:not(#printableQuestionsArea) {
     display: none !important;
   }
@@ -431,6 +435,7 @@ body.exam-locked img {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    page: naskahF4;
   }
   body.printing-questions #printableQuestionsArea .naskah-paper-sheet {
     box-shadow: none !important;
@@ -439,6 +444,7 @@ body.exam-locked img {
     padding: 6mm 8mm !important;
     width: 100% !important;
     max-width: none !important;
+    min-height: auto !important;
   }
   body.printing-questions #printableQuestionsArea .naskah-page-break {
     page-break-before: always !important;
@@ -457,8 +463,33 @@ body.exam-locked img {
   color: #000000 !important;
   border-color: #000000;
 }
+#questionsPaperPreviewContainer .naskah-paper-sheet {
+  min-height: 330mm;
+}
+body.printing-questions #printableQuestionsArea .naskah-paper-sheet {
+  margin: 0 !important;
+  box-shadow: none !important;
+  width: 210mm !important;
+  max-width: 210mm !important;
+  padding: 10mm 13mm !important;
+}
 .naskah-soal-item {
   break-inside: avoid;
   page-break-inside: avoid;
+}
+.cbt-print-footer-note,
+.naskah-paper-sheet .cbt-print-footer-note {
+  color: #1d4ed8 !important;
+  font-style: italic !important;
+  font-size: 8.5px !important;
+  line-height: 1.25 !important;
+  white-space: nowrap !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media screen {
+  html.dark .cbt-print-footer-note {
+    color: #60a5fa !important;
+  }
 }
 

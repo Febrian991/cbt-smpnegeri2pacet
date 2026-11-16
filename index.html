@@ -601,6 +601,8 @@
           </div>
         </div>
 
+        <p id="resAutoPrintNote" class="cbt-print-footer-note mt-2 mb-4 pt-2 border-t border-slate-100 text-center" style="font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></p>
+
         <div class="flex flex-col sm:flex-row gap-2.5 sm:gap-3 no-print">
           <button id="btnPrintResult" type="button" class="flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer flex items-center justify-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
@@ -1487,6 +1489,8 @@
         <p id="repTeacherNip" class="text-[10px] text-slate-500">NIP. —</p>
       </div>
     </div>
+
+    <div id="repAutoPrintNote" class="cbt-print-footer-note mt-4 pt-2 border-t border-slate-200" style="font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
   </div>
 
   <!-- TEMPLATE CETAK & PDF KARTU PESERTA UJIAN (UKURAN 9,0 x 5,3 CM) -->
@@ -1926,7 +1930,7 @@
           <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl">📄</div>
           <div>
             <h3 class="font-bold text-sm sm:text-base text-slate-900">Pratinjau &amp; Download Naskah Soal Ujian</h3>
-            <p class="text-[11px] sm:text-xs text-slate-500" id="questionsPreviewSubtitle">Format Kop Surat Resmi, 2 Kolom Rapi &amp; Penyesuaian Otomatis Soal Bergambar</p>
+            <p class="text-[11px] sm:text-xs text-slate-500" id="questionsPreviewSubtitle">Ukuran F4 (21 &times; 33 cm) &bull; Upload Kop Surat Resmi, 2 Kolom Rapi &amp; Penyesuaian Soal Bergambar</p>
           </div>
         </div>
         <button id="btnCloseQuestionsPreview" type="button" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-lg cursor-pointer">✕</button>
@@ -1961,21 +1965,35 @@
           <label class="block font-bold text-slate-600 mb-1" for="nqDateText">Hari / Tanggal (Opsional)</label>
           <input type="text" id="nqDateText" placeholder="Kosongkan untuk titik-titik (........)" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white outline-none focus:ring-2 focus:ring-blue-500">
         </div>
+        <div class="col-span-2 sm:col-span-2">
+          <label class="block font-bold text-slate-600 mb-1">Kop Surat Resmi (Opsional)</label>
+          <input type="file" id="nqKopImageFile" accept="image/*" class="hidden">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button type="button" id="btnUploadNqKopImage" class="px-2.5 py-1.5 rounded-lg border border-blue-300 bg-white hover:bg-blue-50 text-blue-700 font-bold text-xs cursor-pointer transition flex items-center gap-1 shadow-xs">
+              <span>🖼️ Upload Kop Surat</span>
+            </button>
+            <button type="button" id="btnRemoveNqKopImage" class="hidden px-2 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[11px] cursor-pointer transition" title="Hapus gambar kop surat & kembali ke kop otomatis">
+              ✕ Hapus
+            </button>
+            <span id="nqKopImageStatus" class="text-[11px] font-semibold text-slate-500 truncate max-w-[150px]">Kop Otomatis Sekolah</span>
+          </div>
+        </div>
         <div class="col-span-2 sm:col-span-2 flex items-end pb-1">
           <label class="inline-flex items-center gap-2 font-bold text-slate-700 cursor-pointer">
             <input type="checkbox" id="nqIncludeAnswerKey" class="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer">
-            <span>Sertakan Lembar Kunci Jawaban di Akhir</span>
+            <span>Sertakan Kunci Jawaban</span>
           </label>
         </div>
       </div>
 
-      <!-- Area Pratinjau Kertas A4 -->
+      <!-- Area Pratinjau Kertas F4 (21cm x 33cm) -->
       <div class="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-200/80" id="questionsPaperPreviewContainer"></div>
 
       <!-- Footer Tombol Download -->
       <div class="p-4 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3 rounded-b-3xl">
-        <div class="text-xs text-slate-500 font-medium">
-          Total butir soal: <span id="questionsPreviewCountBadge" class="font-bold text-emerald-700">0 Soal</span>
+        <div class="text-xs text-slate-500 font-medium flex items-center gap-2 flex-wrap">
+          <span>Total: <span id="questionsPreviewCountBadge" class="font-bold text-emerald-700">0 Soal</span></span>
+          <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-bold text-[11px]">Kertas F4 (21 &times; 33 cm)</span>
         </div>
         <div class="flex flex-wrap gap-2">
           <button id="btnCancelQuestionsPreview" type="button" class="px-4 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
@@ -2011,13 +2029,13 @@
   </div>
 
   <!-- ======================== SCRIPTS ======================== -->
-  <script src="js/default-questions.js?v=3.12"></script>
-  <script src="js/default-teachers.js?v=3.12"></script>
-  <script src="js/default-students.js?v=3.12"></script>
-  <script src="js/supabase-config.js?v=3.12"></script>
-  <script src="js/exam-engine.js?v=3.12"></script>
-  <script src="js/admin.js?v=3.12"></script>
-  <script src="js/app.js?v=3.12"></script>
+  <script src="js/default-questions.js?v=3.14"></script>
+  <script src="js/default-teachers.js?v=3.14"></script>
+  <script src="js/default-students.js?v=3.14"></script>
+  <script src="js/supabase-config.js?v=3.14"></script>
+  <script src="js/exam-engine.js?v=3.14"></script>
+  <script src="js/admin.js?v=3.14"></script>
+  <script src="js/app.js?v=3.14"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

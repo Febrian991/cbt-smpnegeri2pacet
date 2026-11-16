@@ -1425,10 +1425,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('resCompletedAt').innerText = result.completedAt;
     document.getElementById('resTotalQuestions').innerText = `${result.totalQuestions} Butir Soal`;
     document.getElementById('resCheatCount').innerText = `${result.cheatCount || 0} Kali Pelanggaran`;
+    const resAutoNoteEl = document.getElementById('resAutoPrintNote');
+    if (resAutoNoteEl && window.cbtAdmin && typeof window.cbtAdmin.getPrintStampText === 'function') {
+      resAutoNoteEl.innerText = window.cbtAdmin.getPrintStampText();
+    }
   });
 
   const btnPrintResult = document.getElementById('btnPrintResult');
-  if (btnPrintResult) btnPrintResult.addEventListener('click', () => window.print());
+  if (btnPrintResult) btnPrintResult.addEventListener('click', () => {
+    const resAutoNoteEl = document.getElementById('resAutoPrintNote');
+    if (resAutoNoteEl && window.cbtAdmin && typeof window.cbtAdmin.getPrintStampText === 'function') {
+      resAutoNoteEl.innerText = window.cbtAdmin.getPrintStampText();
+    }
+    window.print();
+  });
 
   const btnReturnHome = document.getElementById('btnReturnHome');
   if (btnReturnHome) btnReturnHome.addEventListener('click', () => showView('login'));
@@ -3197,8 +3207,64 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
+      syncNqKopUi();
       refreshQuestionsPaperPreview();
       if (modalPrintQuestionsPreview) modalPrintQuestionsPreview.classList.remove('hidden');
+    });
+  }
+
+  function syncNqKopUi() {
+    const statusEl = document.getElementById('nqKopImageStatus');
+    const btnRemove = document.getElementById('btnRemoveNqKopImage');
+    const cfg = window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : {};
+    const hasKop = Boolean(cfg.kopSuratImage && String(cfg.kopSuratImage).trim() !== '');
+    if (statusEl) {
+      statusEl.innerText = hasKop ? 'Kop Surat Upload Aktif' : 'Kop Otomatis Sekolah';
+      statusEl.className = hasKop
+        ? 'text-[11px] font-bold text-emerald-700 truncate max-w-[150px]'
+        : 'text-[11px] font-semibold text-slate-500 truncate max-w-[150px]';
+    }
+    if (btnRemove) {
+      if (hasKop) btnRemove.classList.remove('hidden');
+      else btnRemove.classList.add('hidden');
+    }
+  }
+
+  const nqKopImageFile = document.getElementById('nqKopImageFile');
+  const btnUploadNqKopImage = document.getElementById('btnUploadNqKopImage');
+  const btnRemoveNqKopImage = document.getElementById('btnRemoveNqKopImage');
+
+  if (btnUploadNqKopImage && nqKopImageFile) {
+    btnUploadNqKopImage.addEventListener('click', () => nqKopImageFile.click());
+    nqKopImageFile.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file || !file.type.startsWith('image/')) {
+        if (file) alert("Harap pilih file gambar (PNG, JPG, atau WEBP) untuk Kop Surat.");
+        return;
+      }
+      compressImageFile(file, 1400, 0.92, true, (dataUrl) => {
+        if (window.cbtAdmin) {
+          const cfg = window.cbtAdmin.getSchoolConfig();
+          cfg.kopSuratImage = dataUrl;
+          window.cbtAdmin.saveSchoolConfig(cfg);
+        }
+        syncNqKopUi();
+        refreshQuestionsPaperPreview();
+      });
+      nqKopImageFile.value = '';
+    });
+  }
+
+  if (btnRemoveNqKopImage) {
+    btnRemoveNqKopImage.addEventListener('click', () => {
+      if (window.cbtAdmin) {
+        const cfg = window.cbtAdmin.getSchoolConfig();
+        cfg.kopSuratImage = '';
+        window.cbtAdmin.saveSchoolConfig(cfg);
+      }
+      if (nqKopImageFile) nqKopImageFile.value = '';
+      syncNqKopUi();
+      refreshQuestionsPaperPreview();
     });
   }
 
@@ -3881,7 +3947,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (formSchoolConfig) {
     formSchoolConfig.addEventListener('submit', (e) => {
       e.preventDefault();
+      const existingCfg = window.cbtAdmin.getSchoolConfig();
       const payload = {
+        ...existingCfg,
         schoolSubtitle: document.getElementById('cfgSchoolSubtitle').value.trim(),
         schoolName: document.getElementById('cfgSchoolName').value.trim(),
         schoolAddress: document.getElementById('cfgSchoolAddress').value.trim(),

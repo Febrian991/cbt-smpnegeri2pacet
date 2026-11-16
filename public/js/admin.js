@@ -833,7 +833,12 @@ class CBTAdmin {
         ]);
       });
 
+      aoaData.push([""]);
+      const footerRowIdx = aoaData.length;
+      aoaData.push([this.getPrintStampText()]);
+
       const ws = XLSX.utils.aoa_to_sheet(aoaData);
+      ws['!merges'] = [{ s: { r: footerRowIdx, c: 0 }, e: { r: footerRowIdx, c: 8 } }];
 
       ws['!cols'] = [
         { wch: 7 },   // Rank
@@ -855,6 +860,7 @@ class CBTAdmin {
   }
 
   exportFallbackExcel(results, analytics, fileName) {
+    const stampText = this.getPrintStampText();
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"></head>
@@ -878,6 +884,7 @@ class CBTAdmin {
             </tr>
           `).join('')}
         </table>
+        <p style="font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; margin-top:8px;">${this.escapePrintHtml(stampText)}</p>
       </body></html>
     `;
 
@@ -1040,6 +1047,11 @@ class CBTAdmin {
         `;
       }).join('');
     }
+
+    const repAutoNoteEl = document.getElementById('repAutoPrintNote');
+    if (repAutoNoteEl) {
+      repAutoNoteEl.innerText = this.getPrintStampText();
+    }
   }
 
   // ===================== KONFIGURASI SEKOLAH & TITI MANGSA =====================
@@ -1058,7 +1070,8 @@ class CBTAdmin {
           headmasterNip: parsed.headmasterNip || "19680512 199403 1 004",
           logoLeft: parsed.logoLeft || "",
           logoRight: parsed.logoRight || "",
-          logoCbt: parsed.logoCbt || ""
+          logoCbt: parsed.logoCbt || "",
+          kopSuratImage: parsed.kopSuratImage || ""
         };
       }
     } catch (e) {}
@@ -1072,7 +1085,8 @@ class CBTAdmin {
       headmasterNip: "19680512 199403 1 004",
       logoLeft: "",
       logoRight: "",
-      logoCbt: ""
+      logoCbt: "",
+      kopSuratImage: ""
     };
   }
 
@@ -1518,6 +1532,41 @@ class CBTAdmin {
   }
 
   // ===================== EKSPOR NASKAH SOAL (SESUAI TEMPLATE PDF + SOAL BERGAMBAR) =====================
+  getPrintStampText() {
+    const now = new Date();
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Jakarta',
+        day: 'numeric',
+        month: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).formatToParts(now);
+      const getP = (t) => (parts.find(p => p.type === t) || {}).value || '';
+      const d = parseInt(getP('day'), 10);
+      const m = parseInt(getP('month'), 10) - 1;
+      const y = getP('year');
+      const hh = getP('hour').padStart(2, '0');
+      const mm = getP('minute').padStart(2, '0');
+      if (d && m >= 0 && m <= 11 && y) {
+        return `Dokumen ini dicetak secara otomatis melalui sistem aplikasi CBT - Computer Based Test. pada ${d} ${months[m]} ${y} pukul ${hh}:${mm} WIB.`;
+      }
+    } catch (e) {}
+    const d = now.getDate();
+    const m = months[now.getMonth()];
+    const y = now.getFullYear();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    return `Dokumen ini dicetak secara otomatis melalui sistem aplikasi CBT - Computer Based Test. pada ${d} ${m} ${y} pukul ${hh}:${mm} WIB.`;
+  }
+
+  getPrintFooterNoteHtml(extraStyle = '') {
+    return `<div class="cbt-print-footer-note" style="margin-top:10px; padding-top:4px; border-top:0.5px solid #cbd5e1; font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${extraStyle}">${this.escapePrintHtml(this.getPrintStampText())}</div>`;
+  }
+
   escapePrintHtml(str) {
     return String(str == null ? '' : str)
       .replace(/&/g, '&amp;')
@@ -1633,29 +1682,41 @@ class CBTAdmin {
     const dateText = String(options.dateText || '').trim() || '......................................';
     const includeAnswerKey = Boolean(options.includeAnswerKey);
 
+    const customKopImg = options.kopSuratImage !== undefined ? options.kopSuratImage : (cfg.kopSuratImage || '');
     const logoHtml = cfg.logoLeft
       ? `<img src="${cfg.logoLeft}" alt="Logo Sekolah" style="width:68px; height:68px; object-fit:contain; display:block;">`
       : (cfg.logoRight
         ? `<img src="${cfg.logoRight}" alt="Logo Sekolah" style="width:68px; height:68px; object-fit:contain; display:block;">`
         : `<div style="width:62px; height:62px; border:1.5px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px;">LOGO</div>`);
 
+    const kopBannerHtml = (customKopImg && String(customKopImg).trim() !== '')
+      ? `
+        <!-- KOP SURAT GAMBAR UPLOAD RESMI -->
+        <div style="width:100%; margin-bottom:8px; text-align:center;">
+          <img src="${customKopImg}" alt="Kop Surat Sekolah" style="width:100%; max-height:118px; height:auto; object-fit:contain; display:block; margin:0 auto;">
+        </div>
+      `
+      : `
+        <!-- KOP SURAT OTOMATIS -->
+        <table style="width:100%; border-collapse:collapse; margin-bottom:2px;">
+          <tbody>
+            <tr>
+              <td style="width:78px; vertical-align:middle; text-align:left; padding-bottom:6px;">
+                ${logoHtml}
+              </td>
+              <td style="vertical-align:middle; text-align:center; padding-bottom:6px; padding-right:24px;">
+                <div style="font-size:13px; font-weight:normal; letter-spacing:0.4px; text-transform:uppercase; line-height:1.2;">${this.escapePrintHtml(cfg.schoolSubtitle || 'PEMERINTAH KABUPATEN CIANJUR')}</div>
+                <div style="font-size:18px; font-weight:bold; letter-spacing:0.6px; text-transform:uppercase; line-height:1.25; margin-top:1px;">${this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET')}</div>
+                <div style="font-size:10px; line-height:1.3; margin-top:2px;">${this.escapePrintHtml(cfg.schoolAddress || '')}</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="border-top:2.5px solid #000000; border-bottom:1px solid #000000; height:2px; margin-bottom:8px;"></div>
+      `;
+
     const kopAndMetaHtml = `
-      <!-- KOP SURAT RESMI -->
-      <table style="width:100%; border-collapse:collapse; margin-bottom:2px;">
-        <tbody>
-          <tr>
-            <td style="width:78px; vertical-align:middle; text-align:left; padding-bottom:6px;">
-              ${logoHtml}
-            </td>
-            <td style="vertical-align:middle; text-align:center; padding-bottom:6px; padding-right:24px;">
-              <div style="font-size:13px; font-weight:normal; letter-spacing:0.4px; text-transform:uppercase; line-height:1.2;">${this.escapePrintHtml(cfg.schoolSubtitle || 'PEMERINTAH KABUPATEN CIANJUR')}</div>
-              <div style="font-size:18px; font-weight:bold; letter-spacing:0.6px; text-transform:uppercase; line-height:1.25; margin-top:1px;">${this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET')}</div>
-              <div style="font-size:10px; line-height:1.3; margin-top:2px;">${this.escapePrintHtml(cfg.schoolAddress || '')}</div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div style="border-top:2.5px solid #000000; border-bottom:1px solid #000000; height:2px; margin-bottom:8px;"></div>
+      ${kopBannerHtml}
 
       <!-- JUDUL UJIAN -->
       <div style="text-align:center; font-weight:bold; font-size:12px; line-height:1.35; text-transform:uppercase; margin-bottom:6px;">
@@ -1730,7 +1791,10 @@ class CBTAdmin {
         html: `<div style="font-weight:bold; font-size:11px; margin:6px 0 6px 0;">${singleQs.length > 0 ? 'II' : 'I'}. Pilihan Ganda Kompleks (Pilihlah lebih dari satu jawaban yang benar!)</div>`
       });
       multiQs.forEach(q => {
-        const ans = Array.isArray(q.correctAnswers) ? q.correctAnswers.join(', ') : '-';
+        const rawAns = Array.isArray(q.correctAnswer)
+          ? q.correctAnswer
+          : (Array.isArray(q.correctAnswers) ? q.correctAnswers : (q.correctAnswer ? [q.correctAnswer] : []));
+        const ans = rawAns.length > 0 ? rawAns.join(', ') : '-';
         blocks.push({
           isHeading: false,
           height: this.estimateQuestionHeightPx(q, layoutCols),
@@ -1750,7 +1814,7 @@ class CBTAdmin {
         html: `<div style="font-weight:bold; font-size:11px; margin:6px 0 6px 0;">${roman}. Tentukan Benar (B) atau Salah (S) pada pernyataan berikut!</div>`
       });
       tfQs.forEach(q => {
-        const ans = Array.isArray(q.statements) ? q.statements.map((s, idx) => `${idx + 1}:${s.answer}`).join(', ') : '-';
+        const ans = Array.isArray(q.statements) ? q.statements.map((s, idx) => `${idx + 1}:${s.correct || s.answer || '-'}`).join(', ') : '-';
         blocks.push({
           isHeading: false,
           height: this.estimateQuestionHeightPx(q, layoutCols),
@@ -1762,13 +1826,13 @@ class CBTAdmin {
       });
     }
 
-    // Bagi blok ke halaman A4 agar rapi, tidak memotong soal bergambar di tengah kolom/halaman
+    // Bagi blok ke halaman F4 (21cm x 33cm) agar rapi, tidak memotong soal bergambar di tengah kolom/halaman
     const pages = [];
     let idx = 0;
     let pageNum = 0;
 
     while (idx < blocks.length) {
-      const colLimit = pageNum === 0 ? 635 : 945;
+      const colLimit = pageNum === 0 ? 730 : 1050;
       if (layoutCols === 1) {
         let used = 0;
         const colItems = [];
@@ -1803,6 +1867,8 @@ class CBTAdmin {
       pageNum += 1;
     }
 
+    const footerNoteHtml = this.getPrintFooterNoteHtml();
+
     const pagesHtml = pages.map((pg, pIndex) => {
       const breakStyle = pIndex > 0 ? 'page-break-before:always; break-before:page;' : '';
       const breakClass = pIndex > 0 ? 'naskah-page-break' : '';
@@ -1821,9 +1887,10 @@ class CBTAdmin {
         `;
 
       return `
-        <div class="naskah-paper-sheet ${breakClass}" style="${breakStyle} width:210mm; max-width:100%; margin:0 auto 14px auto; padding:12mm 14mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
+        <div class="naskah-paper-sheet ${breakClass}" style="${breakStyle} width:210mm; max-width:100%; margin:0 auto 14px auto; padding:10mm 13mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
           ${pIndex === 0 ? kopAndMetaHtml : ''}
           ${bodyLayout}
+          ${footerNoteHtml}
         </div>
       `;
     }).join('');
@@ -1838,7 +1905,7 @@ class CBTAdmin {
         </div>
       `).join('');
       keyHtml = `
-        <div class="naskah-paper-sheet naskah-page-break" style="page-break-before:always; break-before:page; width:210mm; max-width:100%; margin:0 auto 14px auto; padding:12mm 14mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
+        <div class="naskah-paper-sheet naskah-page-break" style="page-break-before:always; break-before:page; width:210mm; max-width:100%; margin:0 auto 14px auto; padding:10mm 13mm; background:#ffffff; color:#000000; box-shadow:0 4px 18px rgba(15,23,42,0.12);">
           <div style="text-align:center; border-bottom:2px solid #000000; padding-bottom:6px; margin-bottom:12px;">
             <div style="font-size:13px; font-weight:bold; text-transform:uppercase;">KUNCI JAWABAN • ${this.escapePrintHtml(subjectName)}</div>
             <div style="font-size:11px;">${this.escapePrintHtml(examTitle)} (${this.escapePrintHtml(semester)} ${this.escapePrintHtml(academicYear)})</div>
@@ -1846,6 +1913,7 @@ class CBTAdmin {
           <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
             ${keyRows}
           </div>
+          ${footerNoteHtml}
         </div>
       `;
     }
@@ -1873,10 +1941,10 @@ class CBTAdmin {
     if (typeof html2pdf !== 'undefined') {
       const opt = {
         margin: [0, 0, 0, 0],
-        filename: `Naskah_Soal_${slug}_${Date.now()}.pdf`,
+        filename: `Naskah_Soal_F4_${slug}_${Date.now()}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        jsPDF: { unit: 'mm', format: [210, 330], orientation: 'portrait' },
         pagebreak: { mode: ['css', 'legacy'], before: '.naskah-page-break', avoid: '.naskah-soal-item' }
       };
 
@@ -1908,12 +1976,13 @@ class CBTAdmin {
             xmlns="http://www.w3.org/TR/REC-html40">
       <head>
         <meta charset="utf-8">
-        <title>Naskah Soal Ujian</title>
+        <title>Naskah Soal Ujian F4</title>
         <style>
-          @page { size: 21cm 29.7cm; margin: 1.2cm 1.4cm; }
+          @page { size: 21cm 33cm; margin: 1cm 1.3cm; }
           body { font-family: "Times New Roman", Times, serif; color: #000000; }
-          .naskah-paper-sheet { width: 100% !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; }
+          .naskah-paper-sheet { width: 100% !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; min-height: auto !important; }
           .naskah-page-break { page-break-before: always; }
+          .cbt-print-footer-note { color: #1d4ed8 !important; font-style: italic !important; font-size: 8pt !important; white-space: nowrap !important; }
         </style>
       </head>
       <body>${innerHtml}</body>
@@ -1924,7 +1993,7 @@ class CBTAdmin {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Naskah_Soal_${slug}_${Date.now()}.doc`;
+    a.download = `Naskah_Soal_F4_${slug}_${Date.now()}.doc`;
     document.body.appendChild(a);
     a.click();
     a.remove();
