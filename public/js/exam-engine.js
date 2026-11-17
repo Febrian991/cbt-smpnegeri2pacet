@@ -1,4 +1,214 @@
-// CBT Engine: Timer 80 Menit, Anti Tab Switch Ketat, Scoring Ujian Sekolah Multi-Format
+// CBT Engine v3.38: Timer Monotonik, Anti Tab-Switch & Anti-Tamper, Penilaian Aman Multi-Format
+
+const _CBT_ENGINE_SALT = 'SMPN2PACET_CBT_V338';
+const _CBT_KV_SESSION_KEY = 'cbt_exam_kv_seal';
+const _CBT_DEVICE_ID_KEY = 'cbt_device_tab_id';
+const _CBT_OFFLINE_VAULT_KEY = 'cbt_offline_vault_v1';
+const _CBT_OFFLINE_VAULT_HDR = 'CBT_VAULT_V1:';
+
+const _questionKeyVault = new Map();
+let _fallbackDeviceId = null;
+
+function _hasStaffSessionToken() {
+  try {
+    if (typeof window !== 'undefined' && window.cbtAdmin && typeof window.cbtAdmin.isAuthenticated === 'boolean') {
+      return window.cbtAdmin.isAuthenticated && Boolean(window.cbtAdmin.getCurrentTeacher && window.cbtAdmin.getCurrentTeacher());
+    }
+    const raw = localStorage.getItem('cbt_logged_teacher_session') || sessionStorage.getItem('cbt_logged_teacher');
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed && parsed.id);
+  } catch (e) {
+    return false;
+  }
+}
+
+function _getOrCreateDeviceId() {
+  try {
+    let existing = sessionStorage.getItem(_CBT_DEVICE_ID_KEY);
+    if (existing && existing.trim()) return existing.trim();
+    existing = 'DEV_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    sessionStorage.setItem(_CBT_DEVICE_ID_KEY, existing);
+    return existing;
+  } catch (e) {
+    if (!_fallbackDeviceId) {
+      _fallbackDeviceId = 'DEV_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    }
+    return _fallbackDeviceId;
+  }
+}
+
+function _xorEncode(obj, hdr) {
+  try {
+    const jsonStr = JSON.stringify(obj);
+    let rawBytes;
+    if (typeof TextEncoder !== 'undefined') {
+      rawBytes = new TextEncoder().encode(jsonStr);
+    } else {
+      const binStr = unescape(encodeURIComponent(jsonStr));
+      rawBytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) rawBytes[i] = binStr.charCodeAt(i);
+    }
+    let out = '';
+    for (let i = 0; i < rawBytes.length; i++) {
+      out += String.fromCharCode(rawBytes[i] ^ _CBT_ENGINE_SALT.charCodeAt(i % _CBT_ENGINE_SALT.length));
+    }
+    return hdr + btoa(out);
+  } catch (e) {
+    return null;
+  }
+}
+
+function _xorDecode(raw, hdr) {
+  try {
+    if (!raw || typeof raw !== 'string' || !raw.startsWith(hdr)) return null;
+    const bin = atob(raw.slice(hdr.length));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i) ^ _CBT_ENGINE_SALT.charCodeAt(i % _CBT_ENGINE_SALT.length);
+    }
+    let jsonStr = '';
+    if (typeof TextDecoder !== 'undefined') {
+      jsonStr = new TextDecoder().decode(bytes);
+    } else {
+      jsonStr = decodeURIComponent(escape(Array.from(bytes).map(b => String.fromCharCode(b)).join('')));
+    }
+    const parsed = JSON.parse(jsonStr);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _questionHasKeyMaterial(q) {
+  if (!q || typeof q !== 'object') return false;
+  if (q.correctAnswer !== undefined && q.correctAnswer !== null && q.correctAnswer !== '') return true;
+  if (Array.isArray(q.statements) && q.statements.some(s => s && s.correct !== undefined && s.correct !== null && s.correct !== '')) {
+    return true;
+  }
+  return false;
+}
+
+function _stashQuestionKey(q) {
+  if (!q || q.id === undefined || q.id === null) return;
+  if (!_questionHasKeyMaterial(q)) return;
+  const entry = {
+    type: q.type || 'single',
+    weight: q.weight || 10,
+    correctAnswer: Array.isArray(q.correctAnswer) ? [...q.correctAnswer] : q.correctAnswer
+  };
+  if (Array.isArray(q.statements)) {
+    entry.statements = q.statements.map(s => ({
+      id: s && s.id !== undefined ? s.id : '',
+      correct: s && s.correct !== undefined ? s.correct : undefined
+    }));
+  }
+  _questionKeyVault.set(String(q.id), entry);
+}
+
+function _sealKvToSession(questionsList) {
+  try {
+    const bag = {};
+    let count = 0;
+    (Array.isArray(questionsList) ? questionsList : []).forEach(q => {
+      if (!q || q.id === undefined || q.id === null) return;
+      const k = String(q.id);
+      const v = _questionKeyVault.get(k);
+      if (v) {
+        bag[k] = v;
+        count++;
+      } else if (_questionHasKeyMaterial(q)) {
+        _stashQuestionKey(q);
+        bag[k] = _questionKeyVault.get(k);
+        count++;
+      }
+    });
+    if (count > 0) {
+      const sealed = _xorEncode(bag, 'CBT_KV_V1:');
+      if (sealed) sessionStorage.setItem(_CBT_KV_SESSION_KEY, sealed);
+    }
+  } catch (e) {}
+}
+
+function _unsealKvFromSession() {
+  try {
+    const raw = sessionStorage.getItem(_CBT_KV_SESSION_KEY);
+    if (!raw) return;
+    const bag = _xorDecode(raw, 'CBT_KV_V1:');
+    if (!bag) return;
+    Object.keys(bag).forEach(k => {
+      if (!_questionKeyVault.has(k) && bag[k]) {
+        _questionKeyVault.set(k, bag[k]);
+      }
+    });
+  } catch (e) {}
+}
+
+function _clearKvSeal() {
+  try {
+    sessionStorage.removeItem(_CBT_KV_SESSION_KEY);
+  } catch (e) {}
+}
+
+function _computeSessionSig(data) {
+  try {
+    const canonical = [
+      String(data?.student?.nisn || ''),
+      String(data?.startedAtIso || ''),
+      String(data?.startedAtMs || 0),
+      String(data?.durationSeconds || 0),
+      String(data?.deadlineEpochMs || 0),
+      String(data?.attemptNumber || 1),
+      String(data?.remainingSeconds || 0),
+      String(data?.cheatCount || 0),
+      JSON.stringify(data?.answers || {}),
+      _CBT_ENGINE_SALT
+    ].join('|');
+
+    let h1 = 2166136261;
+    let h2 = 0x9e3779b9;
+    for (let i = 0; i < canonical.length; i++) {
+      const ch = canonical.charCodeAt(i);
+      h1 ^= ch;
+      h1 = Math.imul(h1, 16777619);
+      h2 = Math.imul(h2 ^ ch, 0x85ebca6b) >>> 0;
+    }
+    return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+  } catch (e) {
+    return '';
+  }
+}
+
+function _appendOfflineResultToVault(resultRecord) {
+  if (!resultRecord || !resultRecord.id) return;
+  try {
+    const existingRaw = localStorage.getItem(_CBT_OFFLINE_VAULT_KEY);
+    const vault = (existingRaw ? _xorDecode(existingRaw, _CBT_OFFLINE_VAULT_HDR) : null) || {};
+    const prevResults = Array.isArray(vault.results) ? vault.results : [];
+    const nextResults = [resultRecord, ...prevResults.filter(r => r && String(r.id) !== String(resultRecord.id))];
+    const updatedVault = {
+      teachers: Array.isArray(vault.teachers) ? vault.teachers : [],
+      students: Array.isArray(vault.students) ? vault.students : [],
+      questions: Array.isArray(vault.questions) ? vault.questions : [],
+      results: nextResults
+    };
+    const sealed = _xorEncode(updatedVault, _CBT_OFFLINE_VAULT_HDR);
+    if (sealed) localStorage.setItem(_CBT_OFFLINE_VAULT_KEY, sealed);
+  } catch (e) {}
+}
+
+function _hydrateOfflineFallbackKeys() {
+  try {
+    const raw = localStorage.getItem(_CBT_OFFLINE_VAULT_KEY);
+    const vault = raw ? _xorDecode(raw, _CBT_OFFLINE_VAULT_HDR) : null;
+    if (vault && Array.isArray(vault.questions)) {
+      vault.questions.forEach(q => _stashQuestionKey(q));
+    }
+    if (typeof DEFAULT_QUESTIONS !== 'undefined' && Array.isArray(DEFAULT_QUESTIONS)) {
+      DEFAULT_QUESTIONS.forEach(q => _stashQuestionKey(q));
+    }
+  } catch (e) {}
+}
 
 class ExamEngine {
   constructor() {
@@ -8,6 +218,10 @@ class ExamEngine {
     this.activeExamConfig = null;
     this.attemptNumber = 1;
     this.startedAtIso = null;
+    this.startedAtMs = 0;
+    this.durationSeconds = 0;
+    this.deadlineEpochMs = 0;
+    this.lastTickEpochMs = 0;
     this.lastHeartbeatAt = 0;
     this.wakeLock = null;
     this.currentQuestionIndex = 0;
@@ -17,12 +231,96 @@ class ExamEngine {
     this.timerInterval = null;
     this.cheatCount = 0;
     this.cheatLogs = [];
+    this.lastViolationReason = null;
+    this.lastViolationAt = null;
     this.isExamActive = false;
+    this._isFinishing = false;
     this.fontScaleLevel = 1;
     this.fontScales = ['0.9rem', '1rem', '1.18rem'];
 
     this.audioCtx = null;
     this.initSecurity();
+  }
+
+  isPrivilegedStaffMode() {
+    return _hasStaffSessionToken();
+  }
+
+  getDeviceId() {
+    return _getOrCreateDeviceId();
+  }
+
+  stripQuestionKeys(q) {
+    if (!q || typeof q !== 'object') return q;
+    const clone = { ...q };
+    delete clone.correctAnswer;
+    if (Array.isArray(clone.statements)) {
+      clone.statements = clone.statements.map(s => ({
+        id: s && s.id !== undefined ? s.id : '',
+        text: s && s.text !== undefined ? s.text : ''
+      }));
+    }
+    return clone;
+  }
+
+  enterStudentPrivacyMode() {
+    if (!this.isExamActive) {
+      this.activeQuestions = null;
+      _questionKeyVault.clear();
+      _clearKvSeal();
+    }
+    if (Array.isArray(this.questions)) {
+      this.questions = this.questions.map(q => this.stripQuestionKeys(q));
+      try {
+        localStorage.setItem('cbt_questions', JSON.stringify(this.questions));
+      } catch (e) {}
+    }
+    if (this.config && 'adminPin' in this.config) {
+      const { adminPin, ...cleanCfg } = this.config;
+      this.config = cleanCfg;
+      try {
+        localStorage.setItem('cbt_config', JSON.stringify(this.config));
+      } catch (e) {}
+    }
+  }
+
+  restorePrivilegedQuestionsMode() {
+    if (!this.isPrivilegedStaffMode()) return;
+    _hydrateOfflineFallbackKeys();
+    const defaultMap = new Map(
+      (typeof DEFAULT_QUESTIONS !== 'undefined' && Array.isArray(DEFAULT_QUESTIONS) ? DEFAULT_QUESTIONS : [])
+        .map(q => [String(q.id), q])
+    );
+
+    const rehydrated = (Array.isArray(this.questions) ? this.questions : []).map(q => {
+      if (!q || q.id === undefined || q.id === null) return q;
+      if (_questionHasKeyMaterial(q)) {
+        _stashQuestionKey(q);
+        return q;
+      }
+      const k = String(q.id);
+      const kv = _questionKeyVault.get(k) || defaultMap.get(k);
+      if (!kv) return q;
+      const merged = { ...q };
+      if (kv.correctAnswer !== undefined) {
+        merged.correctAnswer = Array.isArray(kv.correctAnswer) ? [...kv.correctAnswer] : kv.correctAnswer;
+      }
+      if (Array.isArray(merged.statements) && Array.isArray(kv.statements)) {
+        const stmtKeyMap = new Map(kv.statements.map(s => [String(s.id), s.correct]));
+        merged.statements = merged.statements.map(s => ({
+          ...s,
+          correct: s.correct !== undefined ? s.correct : stmtKeyMap.get(String(s.id))
+        }));
+      }
+      return merged;
+    });
+
+    if (rehydrated.length > 0) {
+      this.questions = this.normalizeQuestionsList(rehydrated);
+      try {
+        localStorage.setItem('cbt_questions', JSON.stringify(this.questions));
+      } catch (e) {}
+    }
   }
 
   getActiveExamConfig() {
@@ -105,6 +403,9 @@ class ExamEngine {
     if (saved) {
       try {
         let parsed = JSON.parse(saved);
+        if (parsed && 'adminPin' in parsed) {
+          delete parsed.adminPin;
+        }
         if (parsed.examTitle && parsed.examTitle.includes('TKA')) {
           parsed.examTitle = "Asesmen Sumatif Akhir Semester I";
         }
@@ -113,17 +414,24 @@ class ExamEngine {
         }
         parsed.showScoreToStudent = false;
         parsed.durationMinutes = parsed.durationMinutes || 80;
-        this.saveConfig(parsed, true);
-        return { ...DEFAULT_EXAM_CONFIG, ...parsed };
+        const merged = { ...DEFAULT_EXAM_CONFIG, ...parsed };
+        delete merged.adminPin;
+        this.config = merged;
+        try { localStorage.setItem('cbt_config', JSON.stringify(merged)); } catch (e) {}
+        return merged;
       } catch (e) {
         console.error("Gagal load config", e);
       }
     }
-    return { ...DEFAULT_EXAM_CONFIG };
+    const cleanDefault = { ...DEFAULT_EXAM_CONFIG };
+    delete cleanDefault.adminPin;
+    return cleanDefault;
   }
 
   saveConfig(newConfig, skipCloudPush = false) {
-    this.config = { ...this.config, ...newConfig, showScoreToStudent: false };
+    const merged = { ...this.config, ...newConfig, showScoreToStudent: false };
+    delete merged.adminPin;
+    this.config = merged;
     localStorage.setItem('cbt_config', JSON.stringify(this.config));
     if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
       window.supabaseSync.pushStateKey('cbt_config', this.config);
@@ -149,20 +457,40 @@ class ExamEngine {
   }
 
   loadQuestions() {
+    const isStaff = this.isPrivilegedStaffMode();
     const saved = localStorage.getItem('cbt_questions');
+    let sourceList = null;
+
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const normalized = this.normalizeQuestionsList(parsed);
-          return normalized;
+          sourceList = this.normalizeQuestionsList(parsed);
         }
       } catch (e) {
         console.error("Gagal load questions", e);
       }
     }
-    localStorage.setItem('cbt_questions', JSON.stringify(DEFAULT_QUESTIONS));
-    return [...DEFAULT_QUESTIONS];
+
+    if (!sourceList) {
+      sourceList = this.normalizeQuestionsList(
+        typeof DEFAULT_QUESTIONS !== 'undefined' && Array.isArray(DEFAULT_QUESTIONS) ? DEFAULT_QUESTIONS : []
+      );
+    }
+
+    sourceList.forEach(q => _stashQuestionKey(q));
+    if (!(typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured())) {
+      _hydrateOfflineFallbackKeys();
+    }
+
+    if (isStaff) {
+      try { localStorage.setItem('cbt_questions', JSON.stringify(sourceList)); } catch (e) {}
+      return sourceList;
+    }
+
+    const stripped = sourceList.map(q => this.stripQuestionKeys(q));
+    try { localStorage.setItem('cbt_questions', JSON.stringify(stripped)); } catch (e) {}
+    return stripped;
   }
 
   generateUniqueQuestionId(existingList = null) {
@@ -188,15 +516,24 @@ class ExamEngine {
   }
 
   saveQuestions(newQuestions, skipCloudPush = false) {
-    this.questions = this.normalizeQuestionsList(newQuestions);
-    localStorage.setItem('cbt_questions', JSON.stringify(this.questions));
-    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
-      if (typeof window.supabaseSync.upsertQuestionRows === 'function') {
-        window.supabaseSync.upsertQuestionRows(this.questions, { skipMigrationCheck: true });
-      } else {
-        window.supabaseSync.pushStateKey('cbt_questions', this.questions);
+    const normalized = this.normalizeQuestionsList(newQuestions);
+    normalized.forEach(q => _stashQuestionKey(q));
+
+    if (this.isPrivilegedStaffMode()) {
+      this.questions = normalized;
+      try { localStorage.setItem('cbt_questions', JSON.stringify(this.questions)); } catch (e) {}
+      if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+        if (typeof window.supabaseSync.upsertQuestionRows === 'function') {
+          window.supabaseSync.upsertQuestionRows(this.questions, { skipMigrationCheck: true });
+        } else {
+          window.supabaseSync.pushStateKey('cbt_questions', this.questions);
+        }
       }
+      return;
     }
+
+    this.questions = normalized.map(q => this.stripQuestionKeys(q));
+    try { localStorage.setItem('cbt_questions', JSON.stringify(this.questions)); } catch (e) {}
   }
 
   matchesSubject(qSub, targetSub) {
@@ -295,8 +632,45 @@ class ExamEngine {
     if (session) {
       try {
         const data = JSON.parse(session);
-        if (data.isExamActive && data.remainingSeconds > 0) {
-          return data;
+        if (data && data.isExamActive && data.student && data.student.nisn) {
+          const now = Date.now();
+          let tampered = false;
+          const durationSec = Number(data.durationSeconds || ((data.activeExamConfig?.durationMinutes || this.config.durationMinutes || 80) * 60));
+          const startedAtMs = Number(data.startedAtMs || Date.parse(data.startedAtIso || '') || now);
+          const deadlineMs = Number(data.deadlineEpochMs || (startedAtMs + durationSec * 1000));
+          const lastTickMs = Number(data.lastTickEpochMs || now);
+
+          const expectedSig = _computeSessionSig({
+            ...data,
+            startedAtMs,
+            durationSeconds: durationSec,
+            deadlineEpochMs: deadlineMs
+          });
+
+          if (!data.sessionSig || data.sessionSig !== expectedSig) {
+            tampered = true;
+          }
+
+          const wallRemaining = Math.max(0, Math.ceil((deadlineMs - now) / 1000));
+          const storedRem = Math.max(0, Number(data.remainingSeconds || 0));
+
+          if (storedRem > wallRemaining + 5 || storedRem > durationSec || lastTickMs > now + 10000) {
+            tampered = true;
+          }
+
+          const clampedRem = Math.min(storedRem, wallRemaining, durationSec);
+          if (clampedRem > 0 || wallRemaining <= 0) {
+            return {
+              ...data,
+              startedAtMs,
+              durationSeconds: durationSec,
+              deadlineEpochMs: deadlineMs,
+              lastTickEpochMs: now,
+              remainingSeconds: clampedRem,
+              _tampered: tampered,
+              _expired: clampedRem <= 0
+            };
+          }
         }
       } catch (e) {
         console.error(e);
@@ -346,28 +720,48 @@ class ExamEngine {
       lastViolationReason: this.lastViolationReason || null,
       lastViolationAt: this.lastViolationAt || null,
       cheatLogs: this.cheatLogs || [],
+      deviceId: this.getDeviceId(),
       startedAt: this.startedAtIso || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });
   }
 
   startExam(studentData, examOverride = null) {
+    this._isFinishing = false;
     this.student = studentData;
     this.activeExamConfig = examOverride ? { ...examOverride } : (studentData && studentData.examConfig ? { ...studentData.examConfig } : null);
     this.attemptNumber = (studentData && parseInt(studentData.attemptNumber, 10)) || 1;
-    this.startedAtIso = new Date().toISOString();
+    this.startedAtMs = Date.now();
+    this.startedAtIso = new Date(this.startedAtMs).toISOString();
     this.answers = {};
     this.currentQuestionIndex = 0;
     this.cheatCount = 0;
     this.cheatLogs = [];
+    this.lastViolationReason = null;
+    this.lastViolationAt = null;
     this.isExamActive = true;
 
     const activeCfg = this.getActiveExamConfig();
-    this.remainingSeconds = (activeCfg.durationMinutes || 80) * 60;
+    this.durationSeconds = Math.max(60, (activeCfg.durationMinutes || 80) * 60);
+    this.deadlineEpochMs = this.startedAtMs + (this.durationSeconds * 1000);
+    this.lastTickEpochMs = this.startedAtMs;
+    this.remainingSeconds = this.durationSeconds;
 
     const targetClass = (studentData && studentData.class) || activeCfg.targetClass || 'Semua Kelas';
     const examQResult = this.getQuestionsForExam(activeCfg.subject, targetClass);
-    this.activeQuestions = examQResult.questions;
+    const selectedRaw = Array.isArray(examQResult.questions) ? examQResult.questions : [];
+    selectedRaw.forEach(q => _stashQuestionKey(q));
+    if (!(typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured())) {
+      _hydrateOfflineFallbackKeys();
+    }
+
+    if (!this.isPrivilegedStaffMode()) {
+      _sealKvToSession(selectedRaw);
+      this.activeQuestions = selectedRaw.map(q => this.stripQuestionKeys(q));
+      this.enterStudentPrivacyMode();
+    } else {
+      this.activeQuestions = selectedRaw;
+    }
 
     this.activeQuestions.forEach(q => {
       const type = q.type || 'single';
@@ -387,41 +781,79 @@ class ExamEngine {
   }
 
   resumeSession(sessionData) {
+    this._isFinishing = false;
+    _unsealKvFromSession();
     this.student = sessionData.student;
     this.activeExamConfig = sessionData.activeExamConfig || (sessionData.student && sessionData.student.examConfig) || null;
     this.attemptNumber = sessionData.attemptNumber || (sessionData.student && sessionData.student.attemptNumber) || 1;
     this.startedAtIso = sessionData.startedAtIso || new Date().toISOString();
+    const activeCfg = this.getActiveExamConfig();
+    this.durationSeconds = Number(sessionData.durationSeconds || ((activeCfg.durationMinutes || 80) * 60));
+    this.startedAtMs = Number(sessionData.startedAtMs || Date.parse(this.startedAtIso) || Date.now());
+    this.deadlineEpochMs = Number(sessionData.deadlineEpochMs || (this.startedAtMs + this.durationSeconds * 1000));
+    this.lastTickEpochMs = Date.now();
     this.answers = sessionData.answers || {};
     this.currentQuestionIndex = sessionData.currentQuestionIndex || 0;
-    this.cheatCount = sessionData.cheatCount || 0;
-    this.cheatLogs = sessionData.cheatLogs || [];
-    const activeCfg = this.getActiveExamConfig();
-    this.remainingSeconds = sessionData.remainingSeconds || ((activeCfg.durationMinutes || 80) * 60);
+    this.cheatCount = Number(sessionData.cheatCount || 0);
+    this.cheatLogs = Array.isArray(sessionData.cheatLogs) ? sessionData.cheatLogs : [];
+    this.remainingSeconds = Math.max(0, Number(sessionData.remainingSeconds ?? Math.ceil((this.deadlineEpochMs - Date.now()) / 1000)));
     this.isExamActive = true;
 
+    let restoredList = [];
     if (Array.isArray(sessionData.activeQuestionIds) && sessionData.activeQuestionIds.length > 0) {
       const restored = sessionData.activeQuestionIds
         .map(id => this.questions.find(q => q.id === id))
         .filter(Boolean);
-      this.activeQuestions = restored.length > 0
+      restoredList = restored.length > 0
         ? restored
         : this.getQuestionsForExam(activeCfg.subject, this.student && this.student.class).questions;
     } else {
-      this.activeQuestions = this.getQuestionsForExam(activeCfg.subject, this.student && this.student.class).questions;
+      restoredList = this.getQuestionsForExam(activeCfg.subject, this.student && this.student.class).questions;
+    }
+
+    if (!this.isPrivilegedStaffMode()) {
+      this.activeQuestions = restoredList.map(q => this.stripQuestionKeys(q));
+      this.enterStudentPrivacyMode();
+    } else {
+      this.activeQuestions = restoredList;
     }
 
     this.acquireScreenLock();
+    this.saveSession();
     this.syncLiveStudentProgress(true);
+
+    if (sessionData._tampered) {
+      setTimeout(() => {
+        if (this.isExamActive) {
+          this.recordViolation('Terdeteksi manipulasi waktu atau data sesi ujian di browser!');
+        }
+      }, 450);
+    }
+
+    if (sessionData._expired || this.remainingSeconds <= 0) {
+      setTimeout(() => {
+        if (this.isExamActive) {
+          this.finishExam('Waktu Ujian Habis! Sistem otomatis mengumpulkan lembar jawaban.');
+        }
+      }, 300);
+      return;
+    }
+
     this.startTimer();
   }
 
   saveSession() {
     if (!this.isExamActive) return;
-    const sessionData = {
+    const basePayload = {
       student: this.student,
       activeExamConfig: this.activeExamConfig,
       attemptNumber: this.attemptNumber,
       startedAtIso: this.startedAtIso,
+      startedAtMs: this.startedAtMs,
+      durationSeconds: this.durationSeconds,
+      deadlineEpochMs: this.deadlineEpochMs,
+      lastTickEpochMs: this.lastTickEpochMs || Date.now(),
+      deviceId: this.getDeviceId(),
       answers: this.answers,
       currentQuestionIndex: this.currentQuestionIndex,
       activeQuestionIds: this.getExamQuestions().map(q => q.id),
@@ -430,7 +862,8 @@ class ExamEngine {
       cheatLogs: this.cheatLogs,
       isExamActive: this.isExamActive
     };
-    localStorage.setItem('cbt_active_session', JSON.stringify(sessionData));
+    basePayload.sessionSig = _computeSessionSig(basePayload);
+    localStorage.setItem('cbt_active_session', JSON.stringify(basePayload));
   }
 
   clearSession() {
@@ -439,14 +872,33 @@ class ExamEngine {
     this.activeExamConfig = null;
     this.releaseScreenLock();
     if (this.timerInterval) clearInterval(this.timerInterval);
+    this.timerInterval = null;
     localStorage.removeItem('cbt_active_session');
+    _clearKvSeal();
+    if (!this.isPrivilegedStaffMode()) {
+      _questionKeyVault.clear();
+    }
   }
 
   startTimer() {
     if (this.timerInterval) clearInterval(this.timerInterval);
     this.timerInterval = setInterval(() => {
+      if (!this.isExamActive || this._isFinishing) {
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+        return;
+      }
+
+      const now = Date.now();
+      const wallRem = this.deadlineEpochMs > 0
+        ? Math.max(0, Math.ceil((this.deadlineEpochMs - now) / 1000))
+        : Math.max(0, this.remainingSeconds - 1);
+
+      const nextRem = Math.min(Math.max(0, this.remainingSeconds - 1), wallRem);
+      this.remainingSeconds = nextRem;
+      this.lastTickEpochMs = now;
+
       if (this.remainingSeconds > 0) {
-        this.remainingSeconds--;
         this.saveSession();
         if (this.remainingSeconds % 20 === 0) {
           this.syncLiveStudentProgress(true);
@@ -456,15 +908,17 @@ class ExamEngine {
         }));
       } else {
         clearInterval(this.timerInterval);
+        this.timerInterval = null;
         this.finishExam('Waktu Ujian Habis! Sistem otomatis mengumpulkan lembar jawaban.');
       }
     }, 1000);
   }
 
   formatTime(seconds) {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
+    const safeSec = Math.max(0, parseInt(seconds, 10) || 0);
+    const hrs = Math.floor(safeSec / 3600);
+    const mins = Math.floor((safeSec % 3600) / 60);
+    const secs = safeSec % 60;
     const pad = (n) => String(n).padStart(2, '0');
     return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
   }
@@ -650,7 +1104,7 @@ class ExamEngine {
       if (this.isExamActive) e.preventDefault();
     });
 
-    ['copy', 'cut', 'dragstart'].forEach((evt) => {
+    ['copy', 'cut', 'paste', 'dragstart'].forEach((evt) => {
       document.addEventListener(evt, (e) => {
         if (this.isExamActive) e.preventDefault();
       });
@@ -663,7 +1117,8 @@ class ExamEngine {
       const isOsScreenshot =
         (e.metaKey && e.shiftKey && ['S', 's', '3', '4', '5'].includes(e.key)) ||
         (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) ||
-        (e.ctrlKey && (e.key === 'p' || e.key === 'P'));
+        (e.ctrlKey && (e.key === 'p' || e.key === 'P')) ||
+        (e.metaKey && (e.key === 'p' || e.key === 'P'));
 
       if (isPrintScreen || isOsScreenshot) {
         e.preventDefault();
@@ -679,14 +1134,16 @@ class ExamEngine {
 
       if (
         e.key === 'F12' ||
-        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) ||
-        (e.ctrlKey && (e.key === 'u' || e.key === 'U' || e.key === 's' || e.key === 'S'))
+        (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+        (e.metaKey && e.altKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+        ((e.ctrlKey || e.metaKey) && ['u', 'U', 's', 'S'].includes(e.key))
       ) {
         e.preventDefault();
         this.recordViolation('Mencoba membuka inspect element / devtools');
+        return;
       }
 
-      if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || e.key === 'x' || e.key === 'X')) {
+      if ((e.ctrlKey || e.metaKey) && ['a', 'A', 'c', 'C', 'v', 'V', 'x', 'X'].includes(e.key)) {
         e.preventDefault();
       }
     };
@@ -696,6 +1153,13 @@ class ExamEngine {
       if (!this.isExamActive) return;
       if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
         handleBlockedKeys(e);
+      }
+    });
+
+    window.addEventListener('beforeprint', () => {
+      if (this.isExamActive) {
+        this.triggerPrivacyShield('Pencetakan halaman diblokir selama ujian berlangsung!');
+        this.recordViolation('Terdeteksi percobaan mencetak halaman soal!');
       }
     });
 
@@ -724,7 +1188,7 @@ class ExamEngine {
   }
 
   recordViolation(reason) {
-    if (!this.isExamActive) return;
+    if (!this.isExamActive || this._isFinishing) return;
 
     this.cheatCount++;
     const now = new Date();
@@ -735,7 +1199,6 @@ class ExamEngine {
     this.saveSession();
 
     this.playAlarmSound();
-    // Kirim peringatan pelanggaran secara instan ke Supabase Cloud untuk dashboard Admin & Guru
     this.syncLiveStudentProgress(true);
 
     window.dispatchEvent(new CustomEvent('cbt-cheat-warning', {
@@ -748,97 +1211,177 @@ class ExamEngine {
 
     if (this.cheatCount >= this.config.maxCheatViolations) {
       setTimeout(() => {
-        this.finishExam(`Ujian dihentikan otomatis karena terdeteksi ${this.cheatCount} kali pelanggaran anti-curang tab switch.`);
+        if (this.isExamActive && !this._isFinishing) {
+          this.finishExam(`Ujian dihentikan otomatis karena terdeteksi ${this.cheatCount} kali pelanggaran anti-curang tab switch.`);
+        }
       }, 1200);
     }
   }
 
-  finishExam(reason = null) {
-    if (!this.isExamActive) return;
+  _buildRedactedReceipt(record) {
+    return {
+      id: record.id,
+      student: record.student,
+      examTitle: record.examTitle,
+      subject: record.subject,
+      attemptNumber: record.attemptNumber || 1,
+      completedAt: record.completedAt,
+      totalQuestions: record.totalQuestions,
+      cheatCount: record.cheatCount || 0,
+      finishReason: record.finishReason
+    };
+  }
 
-    const activeQs = this.getExamQuestions();
-    let totalPointsEarned = 0;
-    let maxPossiblePoints = 0;
-    let correctCount = 0;
-    let incorrectCount = 0;
-    let unattemptedCount = 0;
+  _saveStudentReceiptLocal(receiptOrRecord, isStaff) {
+    try {
+      const allResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+      const list = Array.isArray(allResults) ? allResults : [];
+      const toStore = isStaff ? receiptOrRecord : this._buildRedactedReceipt(receiptOrRecord);
+      const filtered = list.filter(r => r && String(r.id) !== String(toStore.id));
+      filtered.unshift(toStore);
+      localStorage.setItem('cbt_exam_results', JSON.stringify(filtered));
+    } catch (e) {}
+  }
 
-    const detailedAnswers = activeQs.map((q, qIdx) => {
-      const type = q.type || 'single';
-      const weight = q.weight || 10;
-      maxPossiblePoints += weight;
+  _resolveKeyForQuestion(q) {
+    const kv = q && q.id !== undefined && q.id !== null ? _questionKeyVault.get(String(q.id)) : null;
+    if (!kv) return q;
+    const merged = { ...q };
+    if (merged.correctAnswer === undefined && kv.correctAnswer !== undefined) {
+      merged.correctAnswer = kv.correctAnswer;
+    }
+    if (Array.isArray(merged.statements) && Array.isArray(kv.statements)) {
+      const stmtMap = new Map(kv.statements.map(s => [String(s.id), s.correct]));
+      merged.statements = merged.statements.map(s => ({
+        ...s,
+        correct: s.correct !== undefined ? s.correct : stmtMap.get(String(s.id))
+      }));
+    }
+    return merged;
+  }
 
-      const studentAnsData = this.answers[q.id];
-      const studentAns = studentAnsData?.answer;
-      let earned = 0;
-      let isFullyCorrect = false;
-      let status = 'unattempted';
-      let studentAnswerDisplay = '-';
-      let correctAnswerDisplay = '-';
+  async finishExam(reason = null) {
+    if (!this.isExamActive || this._isFinishing) return null;
+    this._isFinishing = true;
 
-      if (type === 'single') {
-        correctAnswerDisplay = q.correctAnswer || '-';
-        studentAnswerDisplay = studentAns || '-';
-      } else if (type === 'multiple') {
-        const correctKeys = Array.isArray(q.correctAnswer) ? q.correctAnswer : [q.correctAnswer];
-        const studentKeys = Array.isArray(studentAns) ? studentAns : [];
-        correctAnswerDisplay = correctKeys.join(',');
-        studentAnswerDisplay = studentKeys.length > 0 ? studentKeys.join(',') : '-';
-      } else if (type === 'true_false') {
-        const statements = q.statements || [];
-        const given = (studentAns && typeof studentAns === 'object' && !Array.isArray(studentAns)) ? studentAns : {};
-        correctAnswerDisplay = statements.map(s => s.correct).join(',');
-        const givenArr = statements.map(s => given[s.id] || '-');
-        studentAnswerDisplay = givenArr.some(v => v !== '-') ? givenArr.join(',') : '-';
+    try {
+      _unsealKvFromSession();
+
+      const activeQs = this.getExamQuestions();
+      const activeCfg = this.getActiveExamConfig();
+      const completedAtStr = new Date().toLocaleString('id-ID');
+      const finishReasonText = reason || 'Selesai mandiri oleh peserta';
+      const totalSec = this.durationSeconds || ((activeCfg.durationMinutes || 80) * 60);
+      const durationUsedSeconds = Math.max(0, totalSec - this.remainingSeconds);
+      const studentSnap = this.student ? { ...this.student } : { nisn: '-', name: 'Peserta', class: 'Umum' };
+      const answersSnap = JSON.parse(JSON.stringify(this.answers || {}));
+      const attemptSnap = this.attemptNumber || 1;
+      const cheatCountSnap = this.cheatCount || 0;
+      const cheatLogsSnap = Array.isArray(this.cheatLogs) ? [...this.cheatLogs] : [];
+      const remainingSnap = this.remainingSeconds;
+      const startedAtIsoSnap = this.startedAtIso || new Date().toISOString();
+      const isStaff = this.isPrivilegedStaffMode();
+      const isCloud = Boolean(typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured());
+
+      // Mode Server-Side Grading v3.38 (Supabase RPC SECURITY DEFINER)
+      if (isCloud && !window.supabaseSync.securityRpcMissing && typeof window.supabaseSync.gradeAndSubmitExamRpc === 'function') {
+        const rpcPayload = {
+          id: 'RES_' + Date.now(),
+          student: {
+            nisn: studentSnap.nisn,
+            name: studentSnap.name,
+            class: studentSnap.class
+          },
+          examTitle: activeCfg.examTitle,
+          subject: activeCfg.subject,
+          attemptNumber: attemptSnap,
+          startedAt: startedAtIsoSnap,
+          completedAt: completedAtStr,
+          durationUsedSeconds,
+          remainingSeconds: remainingSnap,
+          cheatCount: cheatCountSnap,
+          cheatLogs: cheatLogsSnap,
+          lastViolationReason: this.lastViolationReason || null,
+          finishReason: finishReasonText,
+          deviceId: this.getDeviceId(),
+          questionIds: activeQs.map(q => q.id),
+          answers: answersSnap
+        };
+
+        const rpcRes = await window.supabaseSync.gradeAndSubmitExamRpc(rpcPayload);
+        if (rpcRes && rpcRes.success && rpcRes.receipt) {
+          const receipt = {
+            id: rpcRes.receipt.id || rpcPayload.id,
+            student: rpcRes.receipt.student || rpcPayload.student,
+            examTitle: rpcRes.receipt.examTitle || activeCfg.examTitle,
+            subject: rpcRes.receipt.subject || activeCfg.subject,
+            attemptNumber: rpcRes.receipt.attemptNumber || attemptSnap,
+            completedAt: rpcRes.receipt.completedAt || completedAtStr,
+            totalQuestions: rpcRes.receipt.totalQuestions || activeQs.length,
+            cheatCount: rpcRes.receipt.cheatCount !== undefined ? rpcRes.receipt.cheatCount : cheatCountSnap,
+            finishReason: rpcRes.receipt.finishReason || finishReasonText
+          };
+
+          this._saveStudentReceiptLocal(receipt, isStaff);
+          this.clearSession();
+          if (!isStaff) this.enterStudentPrivacyMode();
+
+          window.dispatchEvent(new CustomEvent('cbt-exam-finished', {
+            detail: {
+              result: receipt,
+              showScore: false
+            }
+          }));
+          return receipt;
+        }
       }
 
-      if (!this.isQuestionAnswered(q)) {
-        unattemptedCount++;
-        status = 'unattempted';
-      } else if (type === 'single') {
-        if (studentAns === q.correctAnswer) {
-          earned = weight;
-          isFullyCorrect = true;
-          correctCount++;
-          status = 'correct';
-        } else {
-          incorrectCount++;
-          status = 'incorrect';
+      // Mode Kompatibilitas Pra-SQL / Mode Offline
+      if (!isCloud) {
+        _hydrateOfflineFallbackKeys();
+      }
+      let totalPointsEarned = 0;
+      let maxPossiblePoints = 0;
+      let correctCount = 0;
+      let incorrectCount = 0;
+      let unattemptedCount = 0;
+
+      const detailedAnswers = activeQs.map((rawQ, qIdx) => {
+        const q = this._resolveKeyForQuestion(rawQ);
+        const type = q.type || 'single';
+        const weight = q.weight || 10;
+        maxPossiblePoints += weight;
+
+        const studentAnsData = answersSnap[q.id];
+        const studentAns = studentAnsData?.answer;
+        let earned = 0;
+        let isFullyCorrect = false;
+        let status = 'unattempted';
+        let studentAnswerDisplay = '-';
+        let correctAnswerDisplay = '-';
+
+        if (type === 'single') {
+          correctAnswerDisplay = q.correctAnswer || '-';
+          studentAnswerDisplay = studentAns || '-';
+        } else if (type === 'multiple') {
+          const correctKeys = Array.isArray(q.correctAnswer) ? q.correctAnswer : (q.correctAnswer ? [q.correctAnswer] : []);
+          const studentKeys = Array.isArray(studentAns) ? studentAns : [];
+          correctAnswerDisplay = correctKeys.join(',');
+          studentAnswerDisplay = studentKeys.length > 0 ? studentKeys.join(',') : '-';
+        } else if (type === 'true_false') {
+          const statements = q.statements || [];
+          const given = (studentAns && typeof studentAns === 'object' && !Array.isArray(studentAns)) ? studentAns : {};
+          correctAnswerDisplay = statements.map(s => s.correct).join(',');
+          const givenArr = statements.map(s => given[s.id] || '-');
+          studentAnswerDisplay = givenArr.some(v => v !== '-') ? givenArr.join(',') : '-';
         }
-      } else if (type === 'multiple') {
-        const correctKeys = Array.isArray(q.correctAnswer) ? q.correctAnswer : [q.correctAnswer];
-        const studentKeys = Array.isArray(studentAns) ? studentAns : [];
 
-        const correctSelected = studentKeys.filter(k => correctKeys.includes(k)).length;
-        const incorrectSelected = studentKeys.filter(k => !correctKeys.includes(k)).length;
-
-        if (correctSelected === correctKeys.length && incorrectSelected === 0) {
-          earned = weight;
-          isFullyCorrect = true;
-          correctCount++;
-          status = 'correct';
-        } else if (correctSelected > 0 && incorrectSelected === 0) {
-          earned = Math.round((correctSelected / correctKeys.length) * weight);
-          if (earned > 0) correctCount++; else incorrectCount++;
-          status = 'incorrect';
-        } else {
-          incorrectCount++;
-          status = 'incorrect';
-        }
-      } else if (type === 'true_false') {
-        const statements = q.statements || [];
-        const given = studentAns || {};
-        let stmtCorrect = 0;
-
-        statements.forEach(stmt => {
-          if (given[stmt.id] === stmt.correct) {
-            stmtCorrect++;
-          }
-        });
-
-        if (statements.length > 0) {
-          earned = Math.round((stmtCorrect / statements.length) * weight);
-          if (stmtCorrect === statements.length) {
+        if (!this.isQuestionAnswered(q)) {
+          unattemptedCount++;
+          status = 'unattempted';
+        } else if (type === 'single') {
+          if (studentAns === q.correctAnswer) {
+            earned = weight;
             isFullyCorrect = true;
             correctCount++;
             status = 'correct';
@@ -846,88 +1389,133 @@ class ExamEngine {
             incorrectCount++;
             status = 'incorrect';
           }
+        } else if (type === 'multiple') {
+          const correctKeys = Array.isArray(q.correctAnswer) ? q.correctAnswer : (q.correctAnswer ? [q.correctAnswer] : []);
+          const studentKeys = Array.isArray(studentAns) ? studentAns : [];
+
+          const correctSelected = studentKeys.filter(k => correctKeys.includes(k)).length;
+          const incorrectSelected = studentKeys.filter(k => !correctKeys.includes(k)).length;
+
+          if (correctKeys.length > 0 && correctSelected === correctKeys.length && incorrectSelected === 0) {
+            earned = weight;
+            isFullyCorrect = true;
+            correctCount++;
+            status = 'correct';
+          } else if (correctKeys.length > 0 && correctSelected > 0 && incorrectSelected === 0) {
+            earned = Math.round((correctSelected / correctKeys.length) * weight);
+            if (earned > 0) correctCount++; else incorrectCount++;
+            status = 'incorrect';
+          } else {
+            incorrectCount++;
+            status = 'incorrect';
+          }
+        } else if (type === 'true_false') {
+          const statements = q.statements || [];
+          const given = studentAns || {};
+          let stmtCorrect = 0;
+
+          statements.forEach(stmt => {
+            if (given[stmt.id] === stmt.correct) {
+              stmtCorrect++;
+            }
+          });
+
+          if (statements.length > 0) {
+            earned = Math.round((stmtCorrect / statements.length) * weight);
+            if (stmtCorrect === statements.length) {
+              isFullyCorrect = true;
+              correctCount++;
+              status = 'correct';
+            } else {
+              incorrectCount++;
+              status = 'incorrect';
+            }
+          }
         }
-      }
 
-      totalPointsEarned += earned;
+        totalPointsEarned += earned;
 
-      return {
-        questionNumber: qIdx + 1,
-        questionId: q.id,
-        type: type,
-        questionText: q.question,
-        studentAnswer: studentAns,
-        correctAnswer: type === 'true_false' ? correctAnswerDisplay : q.correctAnswer,
-        studentAnswerDisplay,
-        correctAnswerDisplay,
-        status,
-        earnedScore: earned,
-        maxScore: weight,
-        isFullyCorrect: isFullyCorrect
-      };
-    });
-
-    const finalScore = maxPossiblePoints > 0
-      ? Math.round((totalPointsEarned / maxPossiblePoints) * 100)
-      : 0;
-
-    const activeCfg = this.getActiveExamConfig();
-    const completedAtStr = new Date().toLocaleString('id-ID');
-    const resultRecord = {
-      id: 'RES_' + Date.now(),
-      student: this.student,
-      examTitle: activeCfg.examTitle,
-      subject: activeCfg.subject,
-      attemptNumber: this.attemptNumber || 1,
-      completedAt: completedAtStr,
-      durationUsedSeconds: ((activeCfg.durationMinutes || 80) * 60) - this.remainingSeconds,
-      correctCount,
-      incorrectCount,
-      unattemptedCount,
-      totalQuestions: activeQs.length,
-      finalScore: finalScore,
-      cheatCount: this.cheatCount,
-      cheatLogs: this.cheatLogs,
-      finishReason: reason || 'Selesai mandiri oleh peserta',
-      detailedAnswers
-    };
-
-    const allResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
-    allResults.unshift(resultRecord);
-    localStorage.setItem('cbt_exam_results', JSON.stringify(allResults));
-
-    if (typeof window.supabaseSync !== 'undefined') {
-      window.supabaseSync.submitExamResult(resultRecord);
-      window.supabaseSync.upsertStudentSession({
-        nisn: this.student?.nisn,
-        name: this.student?.name,
-        class: this.student?.class,
-        subject: activeCfg.subject,
-        status: 'completed',
-        attemptNumber: this.attemptNumber || 1,
-        answeredCount: activeQs.length - unattemptedCount,
-        totalQuestions: activeQs.length,
-        remainingSeconds: this.remainingSeconds,
-        cheatCount: this.cheatCount,
-        lastViolationReason: this.lastViolationReason || null,
-        finishReason: reason || 'Selesai mandiri oleh peserta',
-        finalScore: finalScore,
-        startedAt: this.startedAtIso,
-        completedAt: completedAtStr,
-        updatedAt: new Date().toISOString()
+        return {
+          questionNumber: qIdx + 1,
+          questionId: q.id,
+          type: type,
+          questionText: q.question,
+          studentAnswer: studentAns,
+          correctAnswer: type === 'true_false' ? correctAnswerDisplay : q.correctAnswer,
+          studentAnswerDisplay,
+          correctAnswerDisplay,
+          status,
+          earnedScore: earned,
+          maxScore: weight,
+          isFullyCorrect: isFullyCorrect
+        };
       });
-    }
 
-    this.clearSession();
+      const finalScore = maxPossiblePoints > 0
+        ? Math.round((totalPointsEarned / maxPossiblePoints) * 100)
+        : 0;
 
-    window.dispatchEvent(new CustomEvent('cbt-exam-finished', {
-      detail: {
-        result: resultRecord,
-        showScore: false
+      const resultRecord = {
+        id: 'RES_' + Date.now(),
+        student: studentSnap,
+        examTitle: activeCfg.examTitle,
+        subject: activeCfg.subject,
+        attemptNumber: attemptSnap,
+        completedAt: completedAtStr,
+        durationUsedSeconds,
+        correctCount,
+        incorrectCount,
+        unattemptedCount,
+        totalQuestions: activeQs.length,
+        finalScore,
+        cheatCount: cheatCountSnap,
+        cheatLogs: cheatLogsSnap,
+        finishReason: finishReasonText,
+        detailedAnswers
+      };
+
+      if (isCloud && typeof window.supabaseSync !== 'undefined') {
+        await window.supabaseSync.submitExamResult(resultRecord);
+        await window.supabaseSync.upsertStudentSession({
+          nisn: studentSnap.nisn,
+          name: studentSnap.name,
+          class: studentSnap.class,
+          subject: activeCfg.subject,
+          status: 'completed',
+          attemptNumber: attemptSnap,
+          answeredCount: activeQs.length - unattemptedCount,
+          totalQuestions: activeQs.length,
+          remainingSeconds: remainingSnap,
+          cheatCount: cheatCountSnap,
+          lastViolationReason: this.lastViolationReason || null,
+          finishReason: finishReasonText,
+          finalScore,
+          deviceId: this.getDeviceId(),
+          startedAt: startedAtIsoSnap,
+          completedAt: completedAtStr,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        _appendOfflineResultToVault(resultRecord);
       }
-    }));
 
-    return resultRecord;
+      const publicViewRecord = isStaff ? resultRecord : this._buildRedactedReceipt(resultRecord);
+      this._saveStudentReceiptLocal(resultRecord, isStaff);
+
+      this.clearSession();
+      if (!isStaff) this.enterStudentPrivacyMode();
+
+      window.dispatchEvent(new CustomEvent('cbt-exam-finished', {
+        detail: {
+          result: publicViewRecord,
+          showScore: false
+        }
+      }));
+
+      return publicViewRecord;
+    } finally {
+      this._isFinishing = false;
+    }
   }
 }
 

@@ -74,9 +74,16 @@ document.addEventListener('DOMContentLoaded', () => {
         switchAdminTab(savedTab);
       }
       if (!window.cbtAdmin.isSuperAdminUser()) {
-        syncFromCloud(false);
+        syncFromCloud(false, { publicOnly: false });
       }
       return;
+    }
+
+    if (window.studentManager && typeof window.studentManager.scrubSensitiveDataForStudentMode === 'function') {
+      window.studentManager.scrubSensitiveDataForStudentMode();
+    }
+    if (window.examEngine && typeof window.examEngine.enterStudentPrivacyMode === 'function') {
+      window.examEngine.enterStudentPrivacyMode();
     }
 
     // 3. Jika siswa sedang di layar konfirmasi saat refresh, pertahankan layar konfirmasi
@@ -86,13 +93,13 @@ document.addEventListener('DOMContentLoaded', () => {
         tempStudent = JSON.parse(savedConfirm);
         populateConfirmView(tempStudent);
         showView('confirm');
-        syncFromCloud(false);
+        syncFromCloud(false, { publicOnly: true });
         return;
       }
     } catch (e) {}
 
     showView('login');
-    syncFromCloud(false);
+    syncFromCloud(false, { publicOnly: true });
 
     // Shortcut URL ?admin / #admin / #guru untuk Proktor & Guru
     const hashLower = (window.location.hash || '').toLowerCase();
@@ -108,15 +115,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!stateMap || typeof stateMap !== 'object') return false;
     let changed = false;
 
+    const isStaff = Boolean(window.cbtAdmin && window.cbtAdmin.isAuthenticated && window.cbtAdmin.getCurrentTeacher());
+    const isSuperAdmin = Boolean(isStaff && window.cbtAdmin.isSuperAdminUser());
+
     if (stateMap.cbt_school_config && typeof stateMap.cbt_school_config === 'object' && window.cbtAdmin) {
       window.cbtAdmin.saveSchoolConfig(stateMap.cbt_school_config, true);
       changed = true;
     }
-    if (Array.isArray(stateMap.cbt_teachers_list) && stateMap.cbt_teachers_list.length > 0 && window.cbtAdmin) {
+    if (isSuperAdmin && Array.isArray(stateMap.cbt_teachers_list) && stateMap.cbt_teachers_list.length > 0 && window.cbtAdmin) {
       window.cbtAdmin.saveTeachers(stateMap.cbt_teachers_list, true);
       changed = true;
     }
-    if (Array.isArray(stateMap.cbt_students_list) && stateMap.cbt_students_list.length > 0 && window.studentManager) {
+    if (isStaff && Array.isArray(stateMap.cbt_students_list) && stateMap.cbt_students_list.length > 0 && window.studentManager) {
       window.studentManager.saveStudents(stateMap.cbt_students_list, true);
       changed = true;
     }
@@ -140,12 +150,19 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let cloudSyncPromise = null;
-  async function syncFromCloud(force = false) {
+  let cloudSyncPublicOnly = true;
+  async function syncFromCloud(force = false, options = {}) {
     if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) return false;
-    if (cloudSyncPromise && !force) return cloudSyncPromise;
+    const isStaff = Boolean(window.cbtAdmin && window.cbtAdmin.isAuthenticated && window.cbtAdmin.getCurrentTeacher());
+    const publicOnly = options && options.publicOnly !== undefined ? Boolean(options.publicOnly) : !isStaff;
 
-    cloudSyncPromise = (async () => {
-      const res = await window.supabaseSync.pullAllSchoolState();
+    if (cloudSyncPromise && !force && !(cloudSyncPublicOnly && !publicOnly)) {
+      return cloudSyncPromise;
+    }
+
+    cloudSyncPublicOnly = publicOnly;
+    const myPromise = (async () => {
+      const res = await window.supabaseSync.pullAllSchoolState({ publicOnly });
       if (res && res.success && res.state) {
         const hasCloudData = Object.keys(res.state).length > 0;
         if (hasCloudData) {
@@ -160,10 +177,13 @@ document.addEventListener('DOMContentLoaded', () => {
       return false;
     })();
 
+    cloudSyncPromise = myPromise;
     try {
-      return await cloudSyncPromise;
+      return await myPromise;
     } finally {
-      cloudSyncPromise = null;
+      if (cloudSyncPromise === myPromise) {
+        cloudSyncPromise = null;
+      }
     }
   }
 
@@ -242,7 +262,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && viewLogin && !viewLogin.classList.contains('hidden')) {
-      syncFromCloud(true);
+      syncFromCloud(true, { publicOnly: true });
     } else if (!document.hidden && viewAdmin && !viewAdmin.classList.contains('hidden')) {
       syncQuestionsFromCloud(true);
     }
@@ -746,11 +766,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
-        let loginRes = window.cbtAdmin.login(identifier, pin);
-        if ((!loginRes || !loginRes.success) && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
-          await syncFromCloud(true);
-          loginRes = window.cbtAdmin.login(identifier, pin);
-        }
+        const loginRes = await window.cbtAdmin.loginWithCloud(identifier, pin);
 
         if (loginRes && loginRes.success) {
           try {
@@ -762,8 +778,16 @@ document.addEventListener('DOMContentLoaded', () => {
           } catch (err) {}
           if (pinInput) pinInput.value = '';
           showView('admin');
+          if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+            syncFromCloud(true, { publicOnly: false })
+              .then(() => typeof window.supabaseSync.fetchCloudResults === 'function' ? window.supabaseSync.fetchCloudResults() : null)
+              .then(() => {
+                if (viewAdmin && !viewAdmin.classList.contains('hidden')) renderAdminDashboard();
+              })
+              .catch(() => {});
+          }
         } else {
-          showInlineAdminBanner('Username / NIP atau Kata Sandi (PIN) tidak sesuai!');
+          showInlineAdminBanner((loginRes && loginRes.message) || 'Username / NIP atau Kata Sandi (PIN) tidak sesuai!');
         }
       });
     }
@@ -799,7 +823,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (tokenHintEl) {
       const span = tokenHintEl.querySelector('span');
-      const hintText = `Token Ujian Aktif: ${targetToken}`;
+      const hintText = 'Token Ujian dibagikan oleh Pengawas Ruang / Proktor';
       if (span) span.innerText = hintText;
       else tokenHintEl.innerText = hintText;
     }
@@ -905,31 +929,50 @@ document.addEventListener('DOMContentLoaded', () => {
     const studentFoundClass = document.getElementById('studentFoundClass');
 
     if (studentNisnInput) {
-      studentNisnInput.addEventListener('input', () => {
-        showLoginRejection('');
-        const nisn = studentNisnInput.value.trim();
-        if (nisn.length >= 3 && window.studentManager) {
-          const student = window.studentManager.getStudentByNisn(nisn);
-          if (student) {
-            if (studentFoundName) studentFoundName.innerText = student.name;
-            if (studentFoundClass) studentFoundClass.innerText = `Kelas ${student.class}`;
-            if (studentFoundHint) studentFoundHint.classList.remove('hidden');
+      let lookupTimer = null;
+      const applyHintResult = (student) => {
+        if (student) {
+          if (studentFoundName) studentFoundName.innerText = student.name;
+          if (studentFoundClass) studentFoundClass.innerText = `Kelas ${student.class}`;
+          if (studentFoundHint) studentFoundHint.classList.remove('hidden');
 
-            const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
-            const selectEl = document.getElementById('studentScheduleSelect');
-            if (activeList.length > 1 && selectEl && window.examEngine) {
-              const matchingSch = activeList.find(s => window.examEngine.matchesClassLevel(s.classLevel || 'Semua Kelas', student.class));
-              if (matchingSch) {
-                selectEl.value = matchingSch.id;
-                updateLoginDisplayForSchedule(matchingSch);
-              }
+          const activeList = window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : [];
+          const selectEl = document.getElementById('studentScheduleSelect');
+          if (activeList.length > 1 && selectEl && window.examEngine) {
+            const matchingSch = activeList.find(s => window.examEngine.matchesClassLevel(s.classLevel || 'Semua Kelas', student.class));
+            if (matchingSch) {
+              selectEl.value = matchingSch.id;
+              updateLoginDisplayForSchedule(matchingSch);
             }
-          } else {
-            if (studentFoundHint) studentFoundHint.classList.add('hidden');
           }
         } else {
           if (studentFoundHint) studentFoundHint.classList.add('hidden');
         }
+      };
+
+      studentNisnInput.addEventListener('input', () => {
+        showLoginRejection('');
+        if (lookupTimer) clearTimeout(lookupTimer);
+        const nisn = studentNisnInput.value.trim();
+        if (nisn.length < 4 || !window.studentManager) {
+          if (studentFoundHint) studentFoundHint.classList.add('hidden');
+          return;
+        }
+        const immediate = window.studentManager.getStudentByNisn(nisn);
+        if (immediate) {
+          applyHintResult(immediate);
+          return;
+        }
+        lookupTimer = setTimeout(async () => {
+          if (studentNisnInput.value.trim() !== nisn) return;
+          if (typeof window.studentManager.lookupStudentHintWithCloud === 'function') {
+            const hintRes = await window.studentManager.lookupStudentHintWithCloud(nisn);
+            if (studentNisnInput.value.trim() !== nisn) return;
+            applyHintResult(hintRes && hintRes.found ? hintRes : null);
+          } else {
+            applyHintResult(null);
+          }
+        }, 250);
       });
     }
   }
@@ -979,20 +1022,26 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
         const activeTokens = (window.cbtAdmin ? window.cbtAdmin.getActiveSchedules() : []).map(s => String(s.token || '').toUpperCase());
         const cfgToken = String(window.examEngine.config.examToken || '').toUpperCase();
-        const needsRefresh =
-          (token && token !== cfgToken && !activeTokens.includes(token)) ||
-          (window.studentManager && !window.studentManager.getStudentByNisn(nisn));
+        const needsRefresh = Boolean(token && token !== cfgToken && !activeTokens.includes(token));
         if (cloudSyncPromise) {
           await cloudSyncPromise;
         } else if (needsRefresh) {
-          await syncFromCloud(true);
+          await syncFromCloud(true, { publicOnly: true });
         }
       }
 
       if (nisn.toLowerCase() === 'admin' || nisn.toLowerCase().includes('proktor')) {
-        const adminRes = window.cbtAdmin.login('admin', password);
+        const adminRes = await window.cbtAdmin.loginWithCloud('admin', password);
         if (adminRes && adminRes.success) {
           showView('admin');
+          if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+            syncFromCloud(true, { publicOnly: false })
+              .then(() => typeof window.supabaseSync.fetchCloudResults === 'function' ? window.supabaseSync.fetchCloudResults() : null)
+              .then(() => {
+                if (viewAdmin && !viewAdmin.classList.contains('hidden')) renderAdminDashboard();
+              })
+              .catch(() => {});
+          }
           return;
         } else {
           switchLoginPortalTab('admin');
@@ -1015,7 +1064,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let authenticatedStudent = null;
       if (window.studentManager) {
-        const auth = window.studentManager.authenticateStudent(nisn, password);
+        const auth = typeof window.studentManager.authenticateStudentWithCloud === 'function'
+          ? await window.studentManager.authenticateStudentWithCloud(nisn, password)
+          : window.studentManager.authenticateStudent(nisn, password);
         if (!auth.success) {
           showLoginRejection(auth.message);
           return;
@@ -1044,8 +1095,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (!matchedSchedule) {
-          const hintToken = selectedSchObj ? selectedSchObj.token : window.examEngine.config.examToken;
-          showLoginRejection(`Token ujian "${token}" tidak cocok dengan jadwal ujian yang sedang aktif! Token untuk jadwal terpilih (${selectedSchObj?.subject || '-'}): ${hintToken}`);
+          showLoginRejection(`Token ujian "${token}" tidak cocok dengan jadwal ujian (${selectedSchObj?.subject || '-'}). Periksa kembali atau tanyakan kepada Pengawas Ruang!`);
           return;
         }
 
@@ -1057,7 +1107,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         const validToken = window.examEngine.config.examToken.toUpperCase();
         if (token !== validToken) {
-          showLoginRejection(`Token ujian salah! Masukkan token aktif: ${validToken}`);
+          showLoginRejection('Token ujian salah! Periksa kembali atau tanyakan kepada Pengawas Ruang / Proktor.');
           return;
         }
         if (window.examEngine.config.targetClass && !window.examEngine.matchesClassLevel(window.examEngine.config.targetClass, authenticatedStudent.class)) {
@@ -1082,6 +1132,18 @@ document.addEventListener('DOMContentLoaded', () => {
         ...window.examEngine.config
       };
 
+      if (window.supabaseSync && window.supabaseSync.isCloudConfigured() && typeof window.supabaseSync.checkActiveDeviceSessionConflict === 'function') {
+        const devConflict = await window.supabaseSync.checkActiveDeviceSessionConflict(
+          authenticatedStudent.nisn,
+          targetExamConfig.subject,
+          window.examEngine.getDeviceId()
+        );
+        if (devConflict && devConflict.conflict) {
+          showLoginRejection(`⛔ Login Ditolak: Akun NISN ${authenticatedStudent.nisn} (${authenticatedStudent.name}) sedang aktif mengerjakan ujian "${targetExamConfig.subject}" di perangkat lain. Hubungi Proktor untuk reset sesi jika perangkat sebelumnya bermasalah.`);
+          return;
+        }
+      }
+
       const maxAttempts = window.examEngine.getMaxAttemptsForSubject(targetExamConfig.subject, matchedSchedule);
       const attemptStats = await window.examEngine.getStudentAttemptStats(authenticatedStudent.nisn, targetExamConfig.subject);
 
@@ -1100,6 +1162,10 @@ document.addEventListener('DOMContentLoaded', () => {
         maxAttempts: maxAttempts,
         examConfig: targetExamConfig
       };
+
+      if (window.studentManager && typeof window.studentManager.scrubSensitiveDataForStudentMode === 'function') {
+        window.studentManager.scrubSensitiveDataForStudentMode();
+      }
 
       try {
         localStorage.setItem('cbt_confirm_student', JSON.stringify(tempStudent));
@@ -1132,6 +1198,7 @@ document.addEventListener('DOMContentLoaded', () => {
           totalQuestions: qCount,
           remainingSeconds: (targetExamConfig.durationMinutes || 80) * 60,
           cheatCount: 0,
+          deviceId: window.examEngine.getDeviceId(),
           loginAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
@@ -1552,6 +1619,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnReturnHome) {
     btnReturnHome.addEventListener('click', () => {
       openLogoutConfirmModal('student_result', () => {
+        tempStudent = null;
+        try { localStorage.removeItem('cbt_confirm_student'); } catch (e) {}
+        if (window.studentManager && typeof window.studentManager.scrubSensitiveDataForStudentMode === 'function') {
+          window.studentManager.scrubSensitiveDataForStudentMode();
+        }
+        if (window.examEngine && typeof window.examEngine.enterStudentPrivacyMode === 'function') {
+          window.examEngine.enterStudentPrivacyMode();
+        }
         showView('login');
       });
     });
@@ -1591,19 +1666,23 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      let loginRes = window.cbtAdmin.login(identifier, pin);
-      if ((!loginRes || !loginRes.success) && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
-        await syncFromCloud(true);
-        loginRes = window.cbtAdmin.login(identifier, pin);
-      }
+      const loginRes = await window.cbtAdmin.loginWithCloud(identifier, pin);
 
       if (loginRes && loginRes.success) {
         modalAdminPin.classList.add('hidden');
         if (usernameInput) usernameInput.value = '';
         if (pinInput) pinInput.value = '';
         showView('admin');
+        if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+          syncFromCloud(true, { publicOnly: false })
+            .then(() => typeof window.supabaseSync.fetchCloudResults === 'function' ? window.supabaseSync.fetchCloudResults() : null)
+            .then(() => {
+              if (viewAdmin && !viewAdmin.classList.contains('hidden')) renderAdminDashboard();
+            })
+            .catch(() => {});
+        }
       } else {
-        alert("Username / NIP atau PIN salah!");
+        alert((loginRes && loginRes.message) || "Username / NIP atau PIN salah!");
       }
     });
   }
@@ -1720,7 +1799,11 @@ document.addEventListener('DOMContentLoaded', () => {
       openLogoutConfirmModal('admin', () => {
         stopMonitoringAutoRefresh();
         resetAdminRealtimeStateOnLogout();
-        try { localStorage.removeItem('cbt_active_admin_tab'); } catch (e) {}
+        tempStudent = null;
+        try {
+          localStorage.removeItem('cbt_active_admin_tab');
+          localStorage.removeItem('cbt_confirm_student');
+        } catch (e) {}
         window.cbtAdmin.logout();
         showView('login');
       });
@@ -6030,7 +6113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (maxAttEl) maxAttEl.value = config.maxAttempts || 1;
 
     const currentTeacher = window.cbtAdmin.getCurrentTeacher();
-    document.getElementById('cfgAdminPin').value = currentTeacher ? currentTeacher.pin : 'admin123';
+    document.getElementById('cfgAdminPin').value = currentTeacher && currentTeacher.pin ? currentTeacher.pin : '';
   }
 
   const formExamConfig = document.getElementById('formExamConfig');

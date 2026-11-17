@@ -38,9 +38,71 @@ const SAMPLE_INITIAL_STUDENTS = [
   { nisn: "0081234512", name: "Khansa Nabila", class: "9C", birthPlace: "Mojokerto", birthDate: "28 Desember 2011", birthPlaceDate: "Mojokerto, 28 Desember 2011", gender: "Perempuan", address: "Ds. Kesimantengah RT 02 RW 01, Kec. Pacet", password: "123" }
 ];
 
+const CBT_OFFLINE_VAULT_KEY = 'cbt_offline_vault_v1';
+const CBT_OFFLINE_VAULT_PREFIX = 'CBT_VAULT_V1:';
+
+function decodeOfflineVaultSafe() {
+  try {
+    const raw = localStorage.getItem(CBT_OFFLINE_VAULT_KEY);
+    if (!raw || !raw.startsWith(CBT_OFFLINE_VAULT_PREFIX)) return null;
+    const b64 = raw.slice(CBT_OFFLINE_VAULT_PREFIX.length);
+    const bin = atob(b64);
+    const salt = 'SMPN2PACET_CBT_V338';
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i) ^ salt.charCodeAt(i % salt.length);
+    }
+    let jsonStr = '';
+    if (typeof TextDecoder !== 'undefined') {
+      jsonStr = new TextDecoder().decode(bytes);
+    } else {
+      jsonStr = decodeURIComponent(escape(Array.from(bytes).map(b => String.fromCharCode(b)).join('')));
+    }
+    const parsed = JSON.parse(jsonStr);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 class StudentManager {
   constructor() {
+    this._hintMemoryList = null;
     this.students = this.loadStudents();
+  }
+
+  _getCurrentStaffSessionRaw() {
+    try {
+      if (typeof window !== 'undefined' && window.cbtAdmin && typeof window.cbtAdmin.getCurrentTeacher === 'function') {
+        if (window.cbtAdmin.isAuthenticated) {
+          return window.cbtAdmin.getCurrentTeacher();
+        }
+        return null;
+      }
+      const raw = localStorage.getItem('cbt_logged_teacher_session') || sessionStorage.getItem('cbt_logged_teacher');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && parsed.id ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  _hasStaffSession() {
+    return Boolean(this._getCurrentStaffSessionRaw());
+  }
+
+  _hasSuperAdminSession() {
+    const s = this._getCurrentStaffSessionRaw();
+    return Boolean(s && (s.role === 'admin' || s.id === 'admin'));
+  }
+
+  _getOfflineCandidateStudents() {
+    const vault = decodeOfflineVaultSafe();
+    if (vault && Array.isArray(vault.students) && vault.students.length > 0) {
+      return vault.students.map((s, idx) => this.normalizeStudent(s, idx));
+    }
+    return SAMPLE_INITIAL_STUDENTS.map((s, idx) => this.normalizeStudent(s, idx));
   }
 
   normalizeStudent(s, idx = 0) {
@@ -63,27 +125,86 @@ class StudentManager {
   }
 
   loadStudents() {
-    const saved = localStorage.getItem('cbt_students_list');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((s, idx) => this.normalizeStudent(s, idx));
+    if (this._hasSuperAdminSession()) {
+      const saved = localStorage.getItem('cbt_students_list');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((s, idx) => this.normalizeStudent(s, idx));
+          }
+        } catch (e) {
+          console.error("Gagal load students:", e);
         }
-      } catch (e) {
-        console.error("Gagal load students:", e);
       }
+      const candidates = this._getOfflineCandidateStudents();
+      try {
+        localStorage.setItem('cbt_students_list', JSON.stringify(candidates));
+      } catch (e) {}
+      return candidates;
     }
-    localStorage.setItem('cbt_students_list', JSON.stringify(SAMPLE_INITIAL_STUDENTS));
-    return [...SAMPLE_INITIAL_STUDENTS];
+
+    // Mode Guru Mapel: hanya simpan daftar nama/kelas tanpa password di sessionStorage/memori
+    try { localStorage.removeItem('cbt_students_list'); } catch (e) {}
+    if (this._hasStaffSession()) {
+      try {
+        const cachedRoster = sessionStorage.getItem('cbt_guru_roster_cache');
+        if (cachedRoster) {
+          const parsed = JSON.parse(cachedRoster);
+          if (Array.isArray(parsed)) {
+            return parsed.map(s => ({
+              nisn: String(s.nisn || '').trim(),
+              name: String(s.name || '').trim(),
+              class: String(s.class || 'Umum').trim()
+            }));
+          }
+        }
+      } catch (e) {}
+      return [];
+    }
+
+    // Mode Login / Siswa: jangan pernah menyimpan daftar 250 siswa & password ke localStorage
+    try { sessionStorage.removeItem('cbt_guru_roster_cache'); } catch (e) {}
+    return [];
   }
 
   saveStudents(studentsList, skipCloudPush = false) {
-    this.students = studentsList.map((s, idx) => this.normalizeStudent(s, idx));
-    localStorage.setItem('cbt_students_list', JSON.stringify(this.students));
-    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
-      window.supabaseSync.pushStateKey('cbt_students_list', this.students);
+    const list = Array.isArray(studentsList) ? studentsList : [];
+    if (this._hasSuperAdminSession()) {
+      this.students = list.map((s, idx) => this.normalizeStudent(s, idx));
+      try {
+        localStorage.setItem('cbt_students_list', JSON.stringify(this.students));
+      } catch (e) {}
+      if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+        window.supabaseSync.pushStateKey('cbt_students_list', this.students);
+      }
+      return;
     }
+
+    try { localStorage.removeItem('cbt_students_list'); } catch (e) {}
+    if (this._hasStaffSession()) {
+      this.students = list.map(s => ({
+        nisn: String(s.nisn || '').trim(),
+        name: String(s.name || '').trim(),
+        class: String(s.class || 'Umum').trim()
+      }));
+      try {
+        sessionStorage.setItem('cbt_guru_roster_cache', JSON.stringify(this.students));
+      } catch (e) {}
+      return;
+    }
+
+    this.students = [];
+    try { sessionStorage.removeItem('cbt_guru_roster_cache'); } catch (e) {}
+  }
+
+  scrubSensitiveDataForStudentMode() {
+    this.students = [];
+    this._hintMemoryList = null;
+    try {
+      localStorage.removeItem('cbt_students_list');
+      sessionStorage.removeItem('cbt_guru_roster_cache');
+    } catch (e) {}
   }
 
   getAllStudents() {
@@ -124,20 +245,124 @@ class StudentManager {
     return Array.from(classSet).sort((a, b) => this.compareClassNames(a, b));
   }
 
-  authenticateStudent(nisn, password) {
+  authenticateStudent(nisn, password, directoryOverride = null) {
     const cleanNisn = String(nisn || "").trim();
     const cleanPass = String(password || "").trim();
 
-    const student = this.students.find(s => String(s.nisn).trim() === cleanNisn);
+    const pool = (Array.isArray(directoryOverride) && directoryOverride.length > 0)
+      ? directoryOverride
+      : (this.students && this.students.length > 0 ? this.students : this._getOfflineCandidateStudents());
+
+    const student = pool.find(s => String(s.nisn || '').trim() === cleanNisn);
     if (!student) {
       return { success: false, message: "NISN tidak terdaftar di pangkalan data SMP NEGERI 2 PACET!" };
     }
 
-    if (student.password && String(student.password).trim() !== cleanPass) {
+    const expectedPass = String(student.password || '123').trim();
+    if (expectedPass !== cleanPass) {
       return { success: false, message: "Password akun siswa salah! Silakan periksa kartu peserta ujian Anda." };
     }
 
-    return { success: true, student };
+    return {
+      success: true,
+      student: {
+        nisn: String(student.nisn || '').trim(),
+        name: String(student.name || '-').trim(),
+        class: String(student.class || 'Umum').trim()
+      }
+    };
+  }
+
+  async authenticateStudentWithCloud(nisn, password) {
+    const cleanNisn = String(nisn || "").trim();
+    const cleanPass = String(password || "").trim();
+    if (!cleanNisn || !cleanPass) {
+      return { success: false, message: "Harap lengkapi NISN dan kata sandi!" };
+    }
+
+    if (typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+      const rpcRes = await window.supabaseSync.verifyStudentLoginRpc(cleanNisn, cleanPass);
+      if (rpcRes && rpcRes.success && rpcRes.student) {
+        return {
+          success: true,
+          student: {
+            nisn: String(rpcRes.student.nisn || cleanNisn).trim(),
+            name: String(rpcRes.student.name || '-').trim(),
+            class: String(rpcRes.student.class || 'Umum').trim()
+          }
+        };
+      }
+      if (rpcRes && !rpcRes.rpcUnavailable && !rpcRes.not_seeded) {
+        return {
+          success: false,
+          message: rpcRes.message || "NISN atau Password akun siswa salah!"
+        };
+      }
+
+      // Mode Kompatibilitas Pra-SQL / Belum Ter-seed: cek ke direktori Cloud di memori sementara TANPA simpan ke localStorage
+      if (typeof window.supabaseSync.pullAuthDirectoryFallback === 'function') {
+        const dirRes = await window.supabaseSync.pullAuthDirectoryFallback();
+        const cloudStudents = dirRes && dirRes.state && Array.isArray(dirRes.state.cbt_students_list)
+          ? dirRes.state.cbt_students_list
+          : null;
+        if (cloudStudents && cloudStudents.length > 0) {
+          this._hintMemoryList = cloudStudents.map(s => ({
+            nisn: String(s.nisn || '').trim(),
+            name: String(s.name || '').trim(),
+            class: String(s.class || 'Umum').trim()
+          }));
+          return this.authenticateStudent(cleanNisn, cleanPass, cloudStudents);
+        }
+      }
+    }
+
+    return this.authenticateStudent(cleanNisn, cleanPass, this._getOfflineCandidateStudents());
+  }
+
+  async lookupStudentHintWithCloud(nisn) {
+    const cleanNisn = String(nisn || "").trim();
+    if (cleanNisn.length < 4) return { found: false };
+
+    const localMatch = this.getStudentByNisn(cleanNisn);
+    if (localMatch) {
+      return { found: true, name: localMatch.name, class: localMatch.class };
+    }
+
+    if (typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+      if (typeof window.supabaseSync.lookupStudentHintRpc === 'function' && !window.supabaseSync.securityRpcMissing) {
+        const res = await window.supabaseSync.lookupStudentHintRpc(cleanNisn);
+        if (res && res.found) {
+          return { found: true, name: res.name, class: res.class };
+        }
+        if (res && !res.rpcUnavailable) {
+          return { found: false };
+        }
+      }
+
+      if (Array.isArray(this._hintMemoryList)) {
+        const cached = this._hintMemoryList.find(s => s.nisn === cleanNisn);
+        return cached ? { found: true, name: cached.name, class: cached.class } : { found: false };
+      }
+
+      if (typeof window.supabaseSync.pullAuthDirectoryFallback === 'function') {
+        const dirRes = await window.supabaseSync.pullAuthDirectoryFallback();
+        const cloudStudents = dirRes && dirRes.state && Array.isArray(dirRes.state.cbt_students_list)
+          ? dirRes.state.cbt_students_list
+          : [];
+        if (cloudStudents.length > 0) {
+          this._hintMemoryList = cloudStudents.map(s => ({
+            nisn: String(s.nisn || '').trim(),
+            name: String(s.name || '').trim(),
+            class: String(s.class || 'Umum').trim()
+          }));
+          const found = this._hintMemoryList.find(s => s.nisn === cleanNisn);
+          return found ? { found: true, name: found.name, class: found.class } : { found: false };
+        }
+      }
+    }
+
+    const offlineMatch = this._getOfflineCandidateStudents().find(s => s.nisn === cleanNisn);
+    return offlineMatch ? { found: true, name: offlineMatch.name, class: offlineMatch.class } : { found: false };
   }
 
   addStudent(studentData) {

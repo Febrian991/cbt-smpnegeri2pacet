@@ -42,14 +42,115 @@ const DEFAULT_SCHEDULES = [
   }
 ];
 
+const CBT_OFFLINE_VAULT_STORAGE_KEY = 'cbt_offline_vault_v1';
+const CBT_OFFLINE_VAULT_HDR = 'CBT_VAULT_V1:';
+const CBT_OFFLINE_VAULT_SALT = 'SMPN2PACET_CBT_V338';
+
+function encodeCbtOfflineVault(obj) {
+  try {
+    const jsonStr = JSON.stringify(obj || {});
+    let rawBytes;
+    if (typeof TextEncoder !== 'undefined') {
+      rawBytes = new TextEncoder().encode(jsonStr);
+    } else {
+      const binStr = unescape(encodeURIComponent(jsonStr));
+      rawBytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) rawBytes[i] = binStr.charCodeAt(i);
+    }
+    let out = '';
+    for (let i = 0; i < rawBytes.length; i++) {
+      out += String.fromCharCode(rawBytes[i] ^ CBT_OFFLINE_VAULT_SALT.charCodeAt(i % CBT_OFFLINE_VAULT_SALT.length));
+    }
+    return CBT_OFFLINE_VAULT_HDR + btoa(out);
+  } catch (e) {
+    return null;
+  }
+}
+
+function decodeCbtOfflineVault() {
+  try {
+    const raw = localStorage.getItem(CBT_OFFLINE_VAULT_STORAGE_KEY);
+    if (!raw || !raw.startsWith(CBT_OFFLINE_VAULT_HDR)) return null;
+    const bin = atob(raw.slice(CBT_OFFLINE_VAULT_HDR.length));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i) ^ CBT_OFFLINE_VAULT_SALT.charCodeAt(i % CBT_OFFLINE_VAULT_SALT.length);
+    }
+    let jsonStr = '';
+    if (typeof TextDecoder !== 'undefined') {
+      jsonStr = new TextDecoder().decode(bytes);
+    } else {
+      jsonStr = decodeURIComponent(escape(Array.from(bytes).map(b => String.fromCharCode(b)).join('')));
+    }
+    const parsed = JSON.parse(jsonStr);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 class CBTAdmin {
   constructor() {
-    this.teachers = this.loadTeachers();
-    this.schedules = this.loadSchedules();
     this.currentTeacher = this.restoreSession();
     this.isAuthenticated = Boolean(this.currentTeacher);
+    this.teachers = this.loadTeachers();
+    if (this.currentTeacher && this.currentTeacher.id && Array.isArray(this.teachers) && this.isSuperAdminUser()) {
+      const fresh = this.teachers.find(t => t.id === this.currentTeacher.id);
+      if (fresh) this.currentTeacher = fresh;
+    }
+    this.schedules = this.loadSchedules();
     this.selectedSubjectFilter = 'ALL';
     this.selectedClassFilter = 'ALL';
+  }
+
+  _sanitizeTeachersListForGuru(list) {
+    return (Array.isArray(list) ? list : []).map(t => ({
+      id: t.id,
+      nip: t.nip,
+      name: t.name,
+      subject: t.subject,
+      classes: t.classes || '',
+      role: t.role || 'guru'
+    }));
+  }
+
+  _normalizeTeachersArray(list) {
+    if (!Array.isArray(list) || list.length === 0) return [];
+    let hasAdmin = false;
+    const normalized = list.map(t => {
+      if (t && (t.id === 'admin' || t.role === 'admin')) {
+        hasAdmin = true;
+        return {
+          ...t,
+          id: "admin",
+          name: t.name || "Proktor Utama / Admin",
+          role: "admin",
+          pin: t.pin ? String(t.pin).trim() : "admin123"
+        };
+      }
+      return t;
+    }).filter(Boolean);
+
+    if (!hasAdmin) {
+      normalized.unshift({
+        id: "admin",
+        nip: "198501012010011001",
+        name: "Proktor Utama / Admin",
+        subject: "Semua Mata Pelajaran (Super Admin)",
+        role: "admin",
+        pin: "admin123"
+      });
+    }
+    return normalized;
+  }
+
+  _getOfflineCandidateTeachers() {
+    const vault = decodeCbtOfflineVault();
+    if (vault && Array.isArray(vault.teachers) && vault.teachers.length > 0) {
+      return this._normalizeTeachersArray(vault.teachers);
+    }
+    const defaults = typeof DEFAULT_TEACHERS !== 'undefined' ? DEFAULT_TEACHERS : [];
+    return this._normalizeTeachersArray(defaults);
   }
 
   restoreSession() {
@@ -58,8 +159,7 @@ class CBTAdmin {
       if (persistent) {
         const parsed = JSON.parse(persistent);
         if (parsed && parsed.id) {
-          const fresh = this.teachers.find(t => t.id === parsed.id);
-          return fresh || parsed;
+          return parsed;
         }
       }
     } catch (e) {
@@ -69,52 +169,39 @@ class CBTAdmin {
   }
 
   loadTeachers() {
-    const saved = localStorage.getItem('cbt_teachers_list');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          let hasAdmin = false;
-          const normalized = parsed.map(t => {
-            if (t.id === 'admin' || t.role === 'admin') {
-              hasAdmin = true;
-              return {
-                ...t,
-                id: "admin",
-                name: "Proktor Utama / Admin",
-                role: "admin",
-                pin: t.pin || "admin123"
-              };
-            }
-            return t;
-          });
-
-          if (!hasAdmin) {
-            normalized.unshift({
-              id: "admin",
-              nip: "198501012010011001",
-              name: "Proktor Utama / Admin",
-              subject: "Semua Mata Pelajaran (Super Admin)",
-              role: "admin",
-              pin: "admin123"
-            });
-          }
-
-          return normalized;
-        }
-      } catch (e) {
-        console.error("Gagal load teachers:", e);
-      }
+    if (!this.isAuthenticated || !this.currentTeacher) {
+      try { localStorage.removeItem('cbt_teachers_list'); } catch (e) {}
+      return [];
     }
-    const defaults = typeof DEFAULT_TEACHERS !== 'undefined' ? DEFAULT_TEACHERS : [];
-    localStorage.setItem('cbt_teachers_list', JSON.stringify(defaults));
-    return [...defaults];
+
+    if (this.currentTeacher.role === 'admin' || this.currentTeacher.id === 'admin') {
+      const saved = localStorage.getItem('cbt_teachers_list');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return this._normalizeTeachersArray(parsed);
+          }
+        } catch (e) {
+          console.error("Gagal load teachers:", e);
+        }
+      }
+      const candidates = this._getOfflineCandidateTeachers();
+      try {
+        localStorage.setItem('cbt_teachers_list', JSON.stringify(candidates));
+      } catch (e) {}
+      return candidates;
+    }
+
+    // Mode Guru Mapel: jangan menyimpan PIN seluruh guru ke localStorage
+    try { localStorage.removeItem('cbt_teachers_list'); } catch (e) {}
+    return [this.currentTeacher];
   }
 
   saveTeachers(teachersList, skipCloudPush = false) {
-    this.teachers = teachersList;
+    const normalized = this._normalizeTeachersArray(teachersList);
     if (this.currentTeacher && this.currentTeacher.id) {
-      const updatedSelf = this.teachers.find(t => t.id === this.currentTeacher.id);
+      const updatedSelf = normalized.find(t => t.id === this.currentTeacher.id);
       if (updatedSelf) {
         this.currentTeacher = updatedSelf;
         try {
@@ -123,10 +210,32 @@ class CBTAdmin {
         } catch (e) {}
       }
     }
-    localStorage.setItem('cbt_teachers_list', JSON.stringify(this.teachers));
-    if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
-      window.supabaseSync.pushStateKey('cbt_teachers_list', this.teachers);
+
+    if (this.isSuperAdminUser()) {
+      this.teachers = normalized;
+      try {
+        localStorage.setItem('cbt_teachers_list', JSON.stringify(this.teachers));
+      } catch (e) {}
+      if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
+        window.supabaseSync.pushStateKey('cbt_teachers_list', this.teachers);
+      }
+      return;
     }
+
+    try { localStorage.removeItem('cbt_teachers_list'); } catch (e) {}
+    if (this.isAuthenticated) {
+      this.teachers = this._sanitizeTeachersListForGuru(normalized);
+    } else {
+      this.teachers = [];
+    }
+  }
+
+  getAuthRpcCredentials() {
+    if (!this.isAuthenticated || !this.currentTeacher) return null;
+    const identifier = String(this.currentTeacher.nip || this.currentTeacher.id || '').trim();
+    const pin = String(this.currentTeacher.pin || '').trim();
+    if (!identifier || !pin) return null;
+    return { identifier, pin };
   }
 
   getAllTeachers() {
@@ -329,13 +438,88 @@ class CBTAdmin {
     return { success: true, count };
   }
 
-  login(identifier, pinInput) {
+  _completeStaffLogin(teacher, directoryPool = null) {
+    this.isAuthenticated = true;
+    this.currentTeacher = { ...teacher };
+    this.selectedSubjectFilter = 'ALL';
+    this.selectedClassFilter = 'ALL';
+
+    try {
+      localStorage.setItem('cbt_logged_teacher_session', JSON.stringify(this.currentTeacher));
+      sessionStorage.setItem('cbt_logged_teacher', JSON.stringify(this.currentTeacher));
+    } catch (e) {}
+
+    const isSuperAdmin = this.currentTeacher.role === 'admin' || this.currentTeacher.id === 'admin';
+    const vault = decodeCbtOfflineVault();
+    const isOffline = !(typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured());
+
+    if (isSuperAdmin) {
+      const fullTeachers = Array.isArray(directoryPool) && directoryPool.length > 0
+        ? this._normalizeTeachersArray(directoryPool)
+        : (vault && Array.isArray(vault.teachers) && vault.teachers.length > 0
+          ? this._normalizeTeachersArray(vault.teachers)
+          : this._getOfflineCandidateTeachers());
+      this.teachers = fullTeachers;
+      try {
+        localStorage.setItem('cbt_teachers_list', JSON.stringify(this.teachers));
+      } catch (e) {}
+
+      if (typeof window !== 'undefined' && window.studentManager) {
+        if (isOffline && vault && Array.isArray(vault.students) && vault.students.length > 0) {
+          window.studentManager.saveStudents(vault.students, true);
+        } else {
+          window.studentManager.students = window.studentManager.loadStudents();
+        }
+      }
+    } else {
+      try { localStorage.removeItem('cbt_teachers_list'); } catch (e) {}
+      this.teachers = Array.isArray(directoryPool) && directoryPool.length > 0
+        ? this._sanitizeTeachersListForGuru(directoryPool)
+        : [this.currentTeacher];
+    }
+
+    if (isOffline && vault) {
+      if (Array.isArray(vault.results)) {
+        try {
+          const curRes = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+          const mergedMap = new Map();
+          [...(Array.isArray(curRes) ? curRes : []), ...(Array.isArray(vault.results) ? vault.results : [])].forEach(r => {
+            if (!r || !r.id) return;
+            const k = String(r.id);
+            const prev = mergedMap.get(k);
+            if (!prev || (prev.finalScore === undefined && r.finalScore !== undefined)) {
+              mergedMap.set(k, r);
+            }
+          });
+          localStorage.setItem('cbt_exam_results', JSON.stringify(Array.from(mergedMap.values())));
+        } catch (e) {}
+      }
+      if (Array.isArray(vault.questions) && vault.questions.length > 0 && typeof window !== 'undefined' && window.examEngine) {
+        window.examEngine.saveQuestions(vault.questions, true);
+      }
+    }
+
+    if (typeof window !== 'undefined' && window.examEngine && typeof window.examEngine.restorePrivilegedQuestionsMode === 'function') {
+      window.examEngine.restorePrivilegedQuestionsMode();
+    }
+
+    return { success: true, teacher: this.currentTeacher };
+  }
+
+  login(identifier, pinInput, directoryOverride = null) {
     const cleanId = String(identifier || "").trim().toLowerCase();
     const cleanPin = String(pinInput || "").trim();
 
     if (!cleanId) {
       return { success: false, message: "Harap masukkan Username / NIP!" };
     }
+    if (!cleanPin) {
+      return { success: false, message: "Harap masukkan PIN / Kata Sandi!" };
+    }
+
+    const pool = (Array.isArray(directoryOverride) && directoryOverride.length > 0)
+      ? this._normalizeTeachersArray(directoryOverride)
+      : (this.teachers && this.teachers.length > 0 ? this.teachers : this._getOfflineCandidateTeachers());
 
     let teacher = null;
     if (
@@ -346,30 +530,20 @@ class CBTAdmin {
       cleanId.includes('admin') ||
       cleanId.includes('proktor')
     ) {
-      teacher = this.teachers.find(t => t.id === 'admin' || t.role === 'admin');
-      if (!teacher) {
-        teacher = {
-          id: "admin",
-          nip: "198501012010011001",
-          name: "Proktor Utama / Admin",
-          subject: "Semua Mata Pelajaran (Super Admin)",
-          role: "admin",
-          pin: "admin123"
-        };
-      }
+      teacher = pool.find(t => t.id === 'admin' || t.role === 'admin');
     } else {
-      teacher = this.teachers.find(t => String(t.nip || '').trim().toLowerCase() === cleanId);
+      teacher = pool.find(t => String(t.nip || '').trim().toLowerCase() === cleanId);
 
       if (!teacher) {
-        teacher = this.teachers.find(t => String(t.id || '').trim().toLowerCase() === cleanId);
+        teacher = pool.find(t => String(t.id || '').trim().toLowerCase() === cleanId);
       }
 
       if (!teacher) {
-        teacher = this.teachers.find(t => String(t.name || '').trim().toLowerCase() === cleanId);
+        teacher = pool.find(t => String(t.name || '').trim().toLowerCase() === cleanId);
       }
 
       if (!teacher && cleanId.length >= 3) {
-        teacher = this.teachers.find(t =>
+        teacher = pool.find(t =>
           String(t.name || '').toLowerCase().includes(cleanId)
         );
       }
@@ -382,46 +556,58 @@ class CBTAdmin {
       };
     }
 
-    const isSuperAdmin = teacher.role === 'admin' || teacher.id === 'admin';
-    const cfgPin = window.examEngine && window.examEngine.config && window.examEngine.config.adminPin
-      ? String(window.examEngine.config.adminPin).trim()
-      : "";
-
-    const isPinMatch = isSuperAdmin
-      ? (
-          cleanPin === String(teacher.pin).trim() ||
-          cleanPin === "admin123" ||
-          cleanPin === "admin" ||
-          cleanPin === "123" ||
-          cleanPin === "123456" ||
-          cleanPin === "guru123" ||
-          (cfgPin && cleanPin === cfgPin)
-        )
-      : (
-          cleanPin === String(teacher.pin).trim() ||
-          cleanPin === "guru123" ||
-          cleanPin === "123"
-        );
-
-    if (!isPinMatch) {
+    const expectedPin = String(teacher.pin || '').trim();
+    if (!expectedPin || cleanPin !== expectedPin) {
       return { success: false, message: "PIN / Kata Sandi salah!" };
     }
 
-    this.isAuthenticated = true;
-    this.currentTeacher = teacher;
-    this.selectedSubjectFilter = 'ALL';
-    this.selectedClassFilter = 'ALL';
-    try {
-      localStorage.setItem('cbt_logged_teacher_session', JSON.stringify(teacher));
-      sessionStorage.setItem('cbt_logged_teacher', JSON.stringify(teacher));
-    } catch (e) {}
-    return { success: true, teacher };
+    return this._completeStaffLogin(teacher, pool);
+  }
+
+  async loginWithCloud(identifier, pinInput) {
+    const cleanId = String(identifier || "").trim();
+    const cleanPin = String(pinInput || "").trim();
+    if (!cleanId || !cleanPin) {
+      return { success: false, message: "Harap masukkan Username / NIP dan PIN!" };
+    }
+
+    if (typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+      const rpcRes = await window.supabaseSync.verifyTeacherLoginRpc(cleanId, cleanPin);
+      if (rpcRes && rpcRes.success && rpcRes.teacher) {
+        const loggedTeacher = { ...rpcRes.teacher, pin: cleanPin };
+        return this._completeStaffLogin(loggedTeacher, null);
+      }
+      if (rpcRes && !rpcRes.rpcUnavailable && !rpcRes.not_seeded) {
+        return {
+          success: false,
+          message: rpcRes.message || "Username / NIP atau Kata Sandi (PIN) tidak sesuai!"
+        };
+      }
+
+      // Mode Kompatibilitas Pra-SQL / Belum Ter-seed: tarik direktori ke memori sementara tanpa menulis localStorage pada login gagal
+      if (typeof window.supabaseSync.pullAuthDirectoryFallback === 'function') {
+        const dirRes = await window.supabaseSync.pullAuthDirectoryFallback();
+        const cloudTeachers = dirRes && dirRes.state && Array.isArray(dirRes.state.cbt_teachers_list)
+          ? dirRes.state.cbt_teachers_list
+          : null;
+        if (cloudTeachers && cloudTeachers.length > 0) {
+          return this.login(cleanId, cleanPin, cloudTeachers);
+        }
+      }
+    }
+
+    return this.login(cleanId, cleanPin, this._getOfflineCandidateTeachers());
   }
 
   getCurrentTeacher() {
+    if (!this.isAuthenticated) return null;
     if (!this.currentTeacher) {
       this.currentTeacher = this.restoreSession();
-    } else if (this.currentTeacher.id && Array.isArray(this.teachers)) {
+    } else if (
+      this.currentTeacher.id &&
+      (this.currentTeacher.role === 'admin' || this.currentTeacher.id === 'admin') &&
+      Array.isArray(this.teachers)
+    ) {
       const fresh = this.teachers.find(t => t.id === this.currentTeacher.id);
       if (fresh) this.currentTeacher = fresh;
     }
@@ -429,15 +615,55 @@ class CBTAdmin {
   }
 
   logout() {
+    const isCloud = Boolean(typeof window !== 'undefined' && window.supabaseSync && window.supabaseSync.isCloudConfigured());
+    if (!isCloud) {
+      try {
+        const prevVault = decodeCbtOfflineVault() || {};
+        const curResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+        const vaultPayload = {
+          teachers: this.isSuperAdminUser() && Array.isArray(this.teachers) && this.teachers.length > 0
+            ? this.teachers
+            : (Array.isArray(prevVault.teachers) ? prevVault.teachers : []),
+          students: (this.isSuperAdminUser() && typeof window !== 'undefined' && window.studentManager)
+            ? window.studentManager.getAllStudents()
+            : (Array.isArray(prevVault.students) ? prevVault.students : []),
+          questions: (typeof window !== 'undefined' && window.examEngine && Array.isArray(window.examEngine.questions))
+            ? window.examEngine.questions
+            : (Array.isArray(prevVault.questions) ? prevVault.questions : []),
+          results: Array.isArray(curResults) && curResults.length > 0
+            ? curResults
+            : (Array.isArray(prevVault.results) ? prevVault.results : [])
+        };
+        const sealed = encodeCbtOfflineVault(vaultPayload);
+        if (sealed) localStorage.setItem(CBT_OFFLINE_VAULT_STORAGE_KEY, sealed);
+      } catch (e) {}
+    } else {
+      try { localStorage.removeItem(CBT_OFFLINE_VAULT_STORAGE_KEY); } catch (e) {}
+    }
+
     this.isAuthenticated = false;
     this.currentTeacher = null;
+    this.teachers = [];
     this.selectedSubjectFilter = 'ALL';
     this.selectedClassFilter = 'ALL';
     try {
       localStorage.removeItem('cbt_logged_teacher_session');
       localStorage.removeItem('cbt_active_admin_tab');
+      localStorage.removeItem('cbt_teachers_list');
+      localStorage.removeItem('cbt_students_list');
+      localStorage.removeItem('cbt_exam_results');
       sessionStorage.removeItem('cbt_logged_teacher');
+      sessionStorage.removeItem('cbt_guru_roster_cache');
     } catch (e) {}
+
+    if (typeof window !== 'undefined') {
+      if (window.studentManager && typeof window.studentManager.scrubSensitiveDataForStudentMode === 'function') {
+        window.studentManager.scrubSensitiveDataForStudentMode();
+      }
+      if (window.examEngine && typeof window.examEngine.enterStudentPrivacyMode === 'function') {
+        window.examEngine.enterStudentPrivacyMode();
+      }
+    }
   }
 
   updateTeacherPin(teacherId, newPin) {

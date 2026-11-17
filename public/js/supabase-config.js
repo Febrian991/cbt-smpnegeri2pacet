@@ -15,6 +15,8 @@ class SupabaseSyncManager {
     this.stateTableMissing = false;
     this.sessionTableMissing = false;
     this.questionTableMissing = false;
+    this.securityRpcMissing = false;
+    this.PUBLIC_STATE_KEYS = ['cbt_config', 'cbt_school_config', 'cbt_exam_schedules', 'cbt_questions_migrated_v1'];
     this.pendingQuestionsStorageKey = 'cbt_pending_question_sync';
     this.questionsMigrationStorageKey = 'cbt_questions_migrated_v1';
     this._migrationPromise = null;
@@ -65,10 +67,127 @@ class SupabaseSyncManager {
     this.stateTableMissing = false;
     this.sessionTableMissing = false;
     this.questionTableMissing = false;
+    this.securityRpcMissing = false;
     this._migrationPromise = null;
     this._flushPromise = null;
     localStorage.setItem('cbt_supabase_config', JSON.stringify(this.config));
     this.initClient();
+  }
+
+  isMissingRpcError(error) {
+    if (!error) return false;
+    const msg = String(error.message || '').toLowerCase();
+    return (
+      error.code === 'PGRST202' ||
+      error.code === '42883' ||
+      error.status === 404 ||
+      msg.includes('could not find the function') ||
+      msg.includes('function public.cbt_') ||
+      (msg.includes('does not exist') && msg.includes('function'))
+    );
+  }
+
+  getPrivilegedCredentials() {
+    if (
+      typeof window !== 'undefined' &&
+      window.cbtAdmin &&
+      window.cbtAdmin.isAuthenticated &&
+      typeof window.cbtAdmin.getAuthRpcCredentials === 'function'
+    ) {
+      return window.cbtAdmin.getAuthRpcCredentials();
+    }
+    return null;
+  }
+
+  stripQuestionKeys(q) {
+    if (!q || typeof q !== 'object') return q;
+    const clone = { ...q };
+    delete clone.correctAnswer;
+    if (Array.isArray(clone.statements)) {
+      clone.statements = clone.statements.map(s => ({
+        id: s && s.id !== undefined ? s.id : '',
+        text: s && s.text !== undefined ? s.text : ''
+      }));
+    }
+    return clone;
+  }
+
+  async callSecurityRpc(fnName, params = {}) {
+    if (!this.client || !this.isConnected || this.securityRpcMissing || typeof this.client.rpc !== 'function') {
+      return { rpcUnavailable: true };
+    }
+    try {
+      const { data, error } = await this.client.rpc(fnName, params);
+      if (error) {
+        if (this.isMissingRpcError(error)) {
+          this.securityRpcMissing = true;
+          return { rpcUnavailable: true };
+        }
+        return { rpcUnavailable: false, success: false, message: error.message };
+      }
+      if (data && typeof data === 'object') {
+        return data;
+      }
+      return { success: false, message: 'Respons server tidak valid.' };
+    } catch (err) {
+      return { rpcUnavailable: true, message: err.message };
+    }
+  }
+
+  async verifyTeacherLoginRpc(identifier, pin) {
+    return this.callSecurityRpc('cbt_verify_teacher_login', {
+      p_identifier: String(identifier || '').trim(),
+      p_pin: String(pin || '').trim()
+    });
+  }
+
+  async verifyStudentLoginRpc(nisn, password) {
+    return this.callSecurityRpc('cbt_verify_student_login', {
+      p_nisn: String(nisn || '').trim(),
+      p_password: String(password || '').trim()
+    });
+  }
+
+  async lookupStudentHintRpc(nisn) {
+    return this.callSecurityRpc('cbt_lookup_student_hint', {
+      p_nisn: String(nisn || '').trim()
+    });
+  }
+
+  async fetchTeacherQuestionsRpc(identifier, pin) {
+    return this.callSecurityRpc('cbt_sync_question_vault', {
+      p_identifier: String(identifier || '').trim(),
+      p_pin: String(pin || '').trim(),
+      p_questions: null,
+      p_delete_key: null,
+      p_replace_all: false
+    });
+  }
+
+  async upsertTeacherQuestionsRpc(identifier, pin, payloads, replaceAll = false) {
+    return this.callSecurityRpc('cbt_sync_question_vault', {
+      p_identifier: String(identifier || '').trim(),
+      p_pin: String(pin || '').trim(),
+      p_questions: payloads,
+      p_delete_key: null,
+      p_replace_all: Boolean(replaceAll)
+    });
+  }
+
+  async deleteTeacherQuestionRpc(identifier, pin, questionKey) {
+    return this.callSecurityRpc('cbt_sync_question_vault', {
+      p_identifier: String(identifier || '').trim(),
+      p_pin: String(pin || '').trim(),
+      p_questions: null,
+      p_delete_key: String(questionKey || '').trim(),
+      p_replace_all: false
+    });
+  }
+
+  async gradeAndSubmitExamRpc(payload) {
+    return this.callSecurityRpc('cbt_grade_and_submit_exam', {
+      p_payload: payload
+    });
   }
 
   initClient() {
@@ -135,12 +254,17 @@ class SupabaseSyncManager {
   // Simpan 1 bagian state aplikasi (config, jadwal, soal, siswa, guru) ke Supabase
   async pushStateKey(key, value) {
     if (!this.client || !this.isConnected || !key) return { success: false };
+    let payloadValue = value;
+    if (key === 'cbt_config' && payloadValue && typeof payloadValue === 'object' && 'adminPin' in payloadValue) {
+      const { adminPin, ...restCfg } = payloadValue;
+      payloadValue = restCfg;
+    }
 
     try {
       if (!this.stateTableMissing) {
         const { error } = await this.client
           .from('cbt_school_state')
-          .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+          .upsert({ key, value: payloadValue, updated_at: new Date().toISOString() }, { onConflict: 'key' });
 
         if (!error) return { success: true };
         if (this.isMissingTableError(error)) {
@@ -173,7 +297,7 @@ class SupabaseSyncManager {
           cheat_count: 0,
           completed_at: new Date().toISOString(),
           finish_reason: 'STATE',
-          raw_data: value
+          raw_data: payloadValue
         }]);
 
       if (fallbackErr) {
@@ -507,6 +631,7 @@ class SupabaseSyncManager {
 
       const CHUNK_SIZE = 50;
       let syncedCount = 0;
+      const creds = this.getPrivilegedCredentials();
 
       for (let i = 0; i < validList.length; i += CHUNK_SIZE) {
         const chunk = validList.slice(i, i + CHUNK_SIZE);
@@ -514,7 +639,14 @@ class SupabaseSyncManager {
         const chunkKeys = payloads.map(p => p.question_key);
         let chunkSaved = false;
 
-        if (!this.questionTableMissing) {
+        if (creds && !this.securityRpcMissing) {
+          const rpcRes = await this.upsertTeacherQuestionsRpc(creds.identifier, creds.pin, payloads, false);
+          if (rpcRes && rpcRes.success) {
+            chunkSaved = true;
+          }
+        }
+
+        if (!chunkSaved && !this.questionTableMissing) {
           const { error } = await this.client
             .from('cbt_questions')
             .upsert(payloads, { onConflict: 'question_key' });
@@ -600,7 +732,15 @@ class SupabaseSyncManager {
       await this.ensureQuestionsMigratedToRows(seedFallback);
 
       let deletedOk = false;
-      if (!this.questionTableMissing) {
+      const creds = this.getPrivilegedCredentials();
+      if (creds && !this.securityRpcMissing) {
+        const rpcRes = await this.deleteTeacherQuestionRpc(creds.identifier, creds.pin, key);
+        if (rpcRes && rpcRes.success) {
+          deletedOk = true;
+        }
+      }
+
+      if (!deletedOk && !this.questionTableMissing) {
         const { error } = await this.client
           .from('cbt_questions')
           .delete()
@@ -649,23 +789,40 @@ class SupabaseSyncManager {
     }
 
     try {
-      if (!this.questionTableMissing) {
-        const { error } = await this.client
-          .from('cbt_questions')
-          .delete()
-          .neq('question_key', '__NEVER_MATCH__');
-        if (error && this.isMissingQuestionsTableError(error)) {
-          this.questionTableMissing = true;
+      const creds = this.getPrivilegedCredentials();
+      let res = null;
+      if (creds && !this.securityRpcMissing) {
+        const payloads = validList.map(q => this.buildQuestionRowPayload(q));
+        const rpcRes = await this.upsertTeacherQuestionsRpc(creds.identifier, creds.pin, payloads, true);
+        if (rpcRes && rpcRes.success) {
+          this.savePendingQuestionOps({ upserts: {}, deletes: {} });
+          res = { success: true, count: validList.length };
         }
       }
 
-      await this.client
-        .from('cbt_exam_results')
-        .delete()
-        .eq('student_nisn', '__CBT_QUESTION_ROW__');
+      if (!res) {
+        if (!this.questionTableMissing) {
+          const { error } = await this.client
+            .from('cbt_questions')
+            .delete()
+            .neq('question_key', '__NEVER_MATCH__');
+          if (error && this.isMissingQuestionsTableError(error)) {
+            this.questionTableMissing = true;
+          }
+        }
 
-      const res = await this.upsertQuestionRows(validList, { skipMigrationCheck: true, skipPendingMark: true });
-      await this.pushStateKey('cbt_questions', validList);
+        await this.client
+          .from('cbt_exam_results')
+          .delete()
+          .eq('student_nisn', '__CBT_QUESTION_ROW__');
+
+        res = await this.upsertQuestionRows(validList, { skipMigrationCheck: true, skipPendingMark: true });
+      }
+
+      const legacyMirror = !this.securityRpcMissing
+        ? validList.map(q => this.stripQuestionKeys(q))
+        : validList;
+      await this.pushStateKey('cbt_questions', legacyMirror);
       await this.markQuestionsMigrationDoneRemote();
       return res;
     } catch (err) {
@@ -700,7 +857,7 @@ class SupabaseSyncManager {
     return this._flushPromise;
   }
 
-  async fetchAllQuestionRows() {
+  async fetchAllQuestionRows(options = {}) {
     if (!this.client || !this.isConnected) {
       return { success: false, rows: [] };
     }
@@ -720,6 +877,22 @@ class SupabaseSyncManager {
     };
 
     try {
+      const creds = this.getPrivilegedCredentials();
+      if (creds && !this.securityRpcMissing) {
+        const vaultRes = await this.fetchTeacherQuestionsRpc(creds.identifier, creds.pin);
+        if (vaultRes && vaultRes.success && Array.isArray(vaultRes.rows)) {
+          vaultRes.rows.forEach(q => putRow(q));
+          if (rowMap.size > 0) {
+            this.markQuestionsMigrationDoneLocal();
+          }
+          return {
+            success: true,
+            rows: this.sortQuestionsList(Array.from(rowMap.values())),
+            source: 'cbt_question_vault'
+          };
+        }
+      }
+
       let primaryOk = false;
       if (!this.questionTableMissing) {
         let from = 0;
@@ -786,7 +959,7 @@ class SupabaseSyncManager {
       }
 
       // Jika tabel cbt_questions sudah aktif dan ada sisa soal di fallback, promosikan otomatis ke cbt_questions
-      if (primaryOk && !this.questionTableMissing && fallbackToPromote.length > 0) {
+      if (primaryOk && !this.questionTableMissing && fallbackToPromote.length > 0 && creds) {
         try {
           const promotePayloads = fallbackToPromote.map(q => this.buildQuestionRowPayload(q));
           const { error: promErr } = await this.client
@@ -806,14 +979,117 @@ class SupabaseSyncManager {
         this.markQuestionsMigrationDoneLocal();
       }
 
+      let rows = this.sortQuestionsList(Array.from(rowMap.values()));
+      if (!creds && options.stripKeys) {
+        rows = rows.map(q => this.stripQuestionKeys(q));
+      }
+
       return {
         success: true,
-        rows: this.sortQuestionsList(Array.from(rowMap.values())),
+        rows,
         source: this.questionTableMissing ? 'fallback_rows' : 'cbt_questions'
       };
     } catch (err) {
       console.warn('Gagal fetchAllQuestionRows:', err);
       return { success: false, rows: [] };
+    }
+  }
+
+  // Ambil daftar guru/siswa ke memori sementara HANYA saat fallback login (ketika RPC v3.38 belum aktif)
+  async pullAuthDirectoryFallback() {
+    if (!this.client || !this.isConnected) {
+      return { success: false, state: {} };
+    }
+    const dirMap = {};
+    const targetKeys = ['cbt_teachers_list', 'cbt_students_list', 'cbt_config'];
+    try {
+      if (!this.stateTableMissing) {
+        const { data, error } = await this.client
+          .from('cbt_school_state')
+          .select('key, value')
+          .in('key', targetKeys);
+        if (!error && Array.isArray(data)) {
+          data.forEach(row => {
+            if (row && row.key && row.value !== undefined && row.value !== null) {
+              dirMap[row.key] = row.value;
+            }
+          });
+        } else if (this.isMissingTableError(error)) {
+          this.stateTableMissing = true;
+        }
+      }
+
+      if (Object.keys(dirMap).length === 0) {
+        const { data: fbData, error: fbError } = await this.client
+          .from('cbt_exam_results')
+          .select('student_name, raw_data, id')
+          .eq('student_nisn', '__CBT_STATE__')
+          .in('student_name', targetKeys)
+          .order('id', { ascending: false });
+        if (!fbError && Array.isArray(fbData)) {
+          fbData.forEach(row => {
+            if (row && row.student_name && row.raw_data !== undefined && dirMap[row.student_name] === undefined) {
+              dirMap[row.student_name] = row.raw_data;
+            }
+          });
+        }
+      }
+      return { success: true, state: dirMap };
+    } catch (e) {
+      return { success: false, state: {} };
+    }
+  }
+
+  async checkActiveDeviceSessionConflict(nisn, subject, deviceId) {
+    if (!this.client || !this.isConnected || !nisn || !subject) {
+      return { conflict: false };
+    }
+    const sessionKey = this.buildSessionKey(nisn, subject);
+    const maxStaleMs = 120000;
+    try {
+      let rowObj = null;
+      if (!this.sessionTableMissing) {
+        const { data, error } = await this.client
+          .from('cbt_student_sessions')
+          .select('*')
+          .eq('session_key', sessionKey)
+          .limit(1);
+        if (!error && Array.isArray(data) && data[0]) {
+          rowObj = data[0].raw_data && typeof data[0].raw_data === 'object'
+            ? { ...data[0].raw_data, status: data[0].status, updatedAt: data[0].updated_at || data[0].raw_data.updatedAt }
+            : { status: data[0].status, updatedAt: data[0].updated_at };
+        } else if (this.isMissingSessionTableError(error)) {
+          this.sessionTableMissing = true;
+        }
+      }
+
+      if (!rowObj && this.sessionTableMissing) {
+        const { data: fbData } = await this.client
+          .from('cbt_exam_results')
+          .select('finish_reason, completed_at, raw_data')
+          .eq('exam_title', '__CBT_LIVE_SESSION__')
+          .eq('student_nisn', String(nisn).trim())
+          .eq('subject', String(subject).trim())
+          .order('id', { ascending: false })
+          .limit(1);
+        if (Array.isArray(fbData) && fbData[0]) {
+          rowObj = fbData[0].raw_data && typeof fbData[0].raw_data === 'object'
+            ? fbData[0].raw_data
+            : { status: fbData[0].finish_reason, updatedAt: fbData[0].completed_at };
+        }
+      }
+
+      if (!rowObj || rowObj.status !== 'in_progress') return { conflict: false };
+      const remoteDevice = String(rowObj.deviceId || '').trim();
+      const updatedMs = Date.parse(rowObj.updatedAt || '');
+      if (remoteDevice && deviceId && remoteDevice !== String(deviceId).trim() && Number.isFinite(updatedMs)) {
+        if ((Date.now() - updatedMs) < maxStaleMs) {
+          return { conflict: true, session: rowObj };
+        }
+      }
+      return { conflict: false };
+    } catch (e) {
+      return { conflict: false };
     }
   }
 
@@ -841,18 +1117,38 @@ class SupabaseSyncManager {
       }
     }
 
+    const isSuperAdmin = Boolean(
+      typeof window !== 'undefined' &&
+      window.cbtAdmin &&
+      typeof window.cbtAdmin.isSuperAdminUser === 'function' &&
+      window.cbtAdmin.isSuperAdminUser()
+    );
+
     const entries = [
       ['cbt_config', window.examEngine ? window.examEngine.config : null],
       ['cbt_school_config', window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : null],
-      ['cbt_exam_schedules', window.cbtAdmin ? window.cbtAdmin.schedules : null],
-      ['cbt_students_list', window.studentManager ? window.studentManager.getAllStudents() : null],
-      ['cbt_teachers_list', window.cbtAdmin ? window.cbtAdmin.getAllTeachers() : null]
-    ].filter(([, val]) => val !== null && val !== undefined);
+      ['cbt_exam_schedules', window.cbtAdmin ? window.cbtAdmin.schedules : null]
+    ];
+
+    if (isSuperAdmin) {
+      if (window.studentManager) {
+        entries.push(['cbt_students_list', window.studentManager.getAllStudents()]);
+      }
+      if (window.cbtAdmin) {
+        entries.push(['cbt_teachers_list', window.cbtAdmin.getAllTeachers()]);
+      }
+    }
+
+    const validEntries = entries.filter(([, val]) => val !== null && val !== undefined);
 
     let pushed = 0;
+    const legacyMirror = !this.securityRpcMissing
+      ? mergedQuestions.map(q => this.stripQuestionKeys(q))
+      : mergedQuestions;
+
     if (mergedQuestions.length > 0) {
       const qPush = await this.upsertQuestionRows(mergedQuestions, { skipMigrationCheck: true, skipPendingMark: true });
-      await this.pushStateKey('cbt_questions', mergedQuestions);
+      await this.pushStateKey('cbt_questions', legacyMirror);
       await this.markQuestionsMigrationDoneRemote();
       if (qPush && qPush.success) pushed++;
     } else if (alreadyMigrated) {
@@ -861,7 +1157,7 @@ class SupabaseSyncManager {
       pushed++;
     }
 
-    for (const [k, v] of entries) {
+    for (const [k, v] of validEntries) {
       const res = await this.pushStateKey(k, v);
       if (res && res.success) pushed++;
     }
@@ -869,20 +1165,24 @@ class SupabaseSyncManager {
   }
 
   // Ambil seluruh pengaturan, jadwal, soal, data siswa & guru terbaru dari Cloud Supabase
-  async pullAllSchoolState() {
+  // options.publicOnly = true: khusus layar login / siswa agar PIN guru, password 250 siswa & kunci soal tidak terbaca di browser siswa
+  async pullAllSchoolState(options = {}) {
     if (!this.client || !this.isConnected) {
       return { success: false, state: {} };
     }
 
+    const publicOnly = Boolean(options && options.publicOnly);
     const stateMap = {};
 
     try {
       await this.flushPendingQuestionOps();
 
       if (!this.stateTableMissing) {
-        const { data, error } = await this.client
-          .from('cbt_school_state')
-          .select('key, value');
+        let query = this.client.from('cbt_school_state').select('key, value');
+        if (publicOnly) {
+          query = query.in('key', this.PUBLIC_STATE_KEYS);
+        }
+        const { data, error } = await query;
 
         if (!error && Array.isArray(data)) {
           data.forEach(row => {
@@ -897,12 +1197,15 @@ class SupabaseSyncManager {
 
       if (Object.keys(stateMap).length === 0) {
         // Fallback otomatis dari tabel cbt_exam_results
-        const { data: fbData, error: fbError } = await this.client
+        let fbQuery = this.client
           .from('cbt_exam_results')
           .select('student_name, raw_data, id')
           .eq('student_nisn', '__CBT_STATE__')
-          .neq('exam_title', '__CBT_LIVE_SESSION__')
-          .order('id', { ascending: false });
+          .neq('exam_title', '__CBT_LIVE_SESSION__');
+        if (publicOnly) {
+          fbQuery = fbQuery.in('student_name', this.PUBLIC_STATE_KEYS);
+        }
+        const { data: fbData, error: fbError } = await fbQuery.order('id', { ascending: false });
 
         if (!fbError && Array.isArray(fbData)) {
           fbData.forEach(row => {
@@ -913,15 +1216,15 @@ class SupabaseSyncManager {
         }
       }
 
-      // Ambil soal per-baris dari cbt_questions (atau fallback __CBT_QUESTION_ROW__)
+      // Ambil soal per-baris dari cbt_questions / brankas soal guru
       const qRes = await this.fetchAllQuestionRows();
       const hasMigrated = qRes && qRes.success && (qRes.rows.length > 0 || await this.isQuestionsMigrationCompleted());
 
       if (hasMigrated) {
         stateMap.cbt_questions = qRes.rows;
         stateMap.cbt_questions_migrated = true;
-      } else if (Array.isArray(stateMap.cbt_questions) && stateMap.cbt_questions.length > 0) {
-        // Auto-migrasi dari penyimpanan lama 1-JSON ke per-baris
+      } else if (!publicOnly && Array.isArray(stateMap.cbt_questions) && stateMap.cbt_questions.length > 0) {
+        // Auto-migrasi dari penyimpanan lama 1-JSON ke per-baris (hanya oleh staf terautentikasi)
         await this.upsertQuestionRows(stateMap.cbt_questions, { skipMigrationCheck: true, skipPendingMark: true });
         await this.markQuestionsMigrationDoneRemote();
         stateMap.cbt_questions_migrated = true;
@@ -1168,20 +1471,19 @@ class SupabaseSyncManager {
     try {
       const { data, error } = await this.client
         .from('cbt_exam_results')
-        .select('*')
+        .select('id, student_name, student_nisn, student_class, exam_title, subject, completed_at')
         .eq('student_nisn', String(nisn).trim())
         .neq('exam_title', '__CBT_LIVE_SESSION__');
 
       if (error || !Array.isArray(data)) return [];
       return data
         .filter(row => row.student_nisn !== '__CBT_STATE__' && row.student_nisn !== '__CBT_QUESTION_ROW__' && row.exam_title !== '__CBT_LIVE_SESSION__')
-        .map(row => row.raw_data ? row.raw_data : {
+        .map(row => ({
           id: row.id,
           student: { name: row.student_name, nisn: row.student_nisn, class: row.student_class },
           subject: row.subject,
-          completedAt: row.completed_at,
-          finalScore: row.final_score
-        });
+          completedAt: row.completed_at
+        }));
     } catch (e) {
       return [];
     }
