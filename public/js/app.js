@@ -5434,10 +5434,18 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnDownloadCardsPdf) {
-    btnDownloadCardsPdf.addEventListener('click', () => {
+    btnDownloadCardsPdf.addEventListener('click', async () => {
       const students = getFilteredPreviewCardStudents();
-      closeCardPreviewModal();
-      window.studentManager.downloadCardsPdf(students, window.examEngine.config.examTitle);
+      const prevHtml = btnDownloadCardsPdf.innerHTML;
+      btnDownloadCardsPdf.disabled = true;
+      btnDownloadCardsPdf.innerHTML = '<span>⏳ Membuat PDF...</span>';
+      try {
+        await window.studentManager.downloadCardsPdf(students, window.examEngine.config.examTitle);
+        closeCardPreviewModal();
+      } finally {
+        btnDownloadCardsPdf.disabled = false;
+        btnDownloadCardsPdf.innerHTML = prevHtml;
+      }
     });
   }
 
@@ -5701,6 +5709,118 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = window.cbtAdmin.resetAllTeacherPasswords("guru123");
         alert(`Sukses! Password ${res.count} guru telah direset ke 'guru123'.`);
         renderAdminTeachersList();
+      }
+    });
+  }
+
+  // ===================== PRATINJAU, DOWNLOAD PDF, & CETAK KARTU LOGIN GURU =====================
+  const modalPrintTeacherCardsPreview = document.getElementById('modalPrintTeacherCardsPreview');
+  const teacherCardFilter = document.getElementById('teacherCardFilter');
+  const teacherCardPreviewContainer = document.getElementById('teacherCardPreviewContainer');
+  const teacherCardPreviewCountBadge = document.getElementById('teacherCardPreviewCountBadge');
+  const btnCloseTeacherCardPreview = document.getElementById('btnCloseTeacherCardPreview');
+  const btnCancelTeacherCardPreview = document.getElementById('btnCancelTeacherCardPreview');
+  const btnExecuteDirectPrintTeacherCards = document.getElementById('btnExecuteDirectPrintTeacherCards');
+  const btnDownloadTeacherCardsPdf = document.getElementById('btnDownloadTeacherCardsPdf');
+  const btnPrintTeacherCards = document.getElementById('btnPrintTeacherCards');
+
+  function getFilteredPreviewCardTeachers(filterValOverride) {
+    const filterVal = filterValOverride !== undefined
+      ? filterValOverride
+      : (teacherCardFilter ? teacherCardFilter.value : 'GURU_ONLY');
+    const allTeachers = window.cbtAdmin ? window.cbtAdmin.getAllTeachers() : [];
+
+    if (filterVal === 'ALL') {
+      return allTeachers;
+    }
+    if (filterVal.startsWith('TEACHER:')) {
+      const targetId = filterVal.slice('TEACHER:'.length);
+      return allTeachers.filter(t => String(t.id) === String(targetId));
+    }
+    return allTeachers.filter(t => t && t.role !== 'admin' && t.id !== 'admin');
+  }
+
+  function renderTeacherCardPreviewContent(filterValOverride) {
+    if (!teacherCardPreviewContainer || !window.cbtAdmin) return;
+    const filterVal = filterValOverride !== undefined
+      ? filterValOverride
+      : (teacherCardFilter ? teacherCardFilter.value : 'GURU_ONLY');
+    const teachers = getFilteredPreviewCardTeachers(filterVal);
+
+    if (teacherCardPreviewCountBadge) {
+      let labelDesc = 'Hanya Guru Mapel';
+      if (filterVal === 'ALL') labelDesc = 'Semua Akun';
+      else if (filterVal.startsWith('TEACHER:') && teachers[0]) labelDesc = teachers[0].name;
+      teacherCardPreviewCountBadge.innerText = `${teachers.length} Kartu (${labelDesc})`;
+    }
+
+    const cardsHtml = window.cbtAdmin.generateTeacherCardsHtml(teachers, window.examEngine.config.examTitle);
+    teacherCardPreviewContainer.innerHTML = `
+      <div class="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4 justify-items-center max-w-4xl mx-auto">
+        ${cardsHtml}
+      </div>
+    `;
+  }
+
+  function openTeacherCardPreviewModal() {
+    if (!modalPrintTeacherCardsPreview || !window.cbtAdmin) return;
+    const allTeachers = window.cbtAdmin.getAllTeachers();
+    if (allTeachers.length === 0) {
+      alert("Belum ada data akun guru.");
+      return;
+    }
+
+    if (teacherCardFilter) {
+      const guruOnlyList = allTeachers.filter(t => t && t.role !== 'admin' && t.id !== 'admin');
+      teacherCardFilter.innerHTML = `
+        <option value="GURU_ONLY">Hanya Guru Mapel (${guruOnlyList.length} Guru)</option>
+        <option value="ALL">Semua Akun (Guru + Proktor/Admin: ${allTeachers.length})</option>
+      `;
+      allTeachers.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = `TEACHER:${t.id}`;
+        const roleTag = (t.role === 'admin' || t.id === 'admin') ? 'Admin' : (t.subject || 'Guru');
+        opt.innerText = `${t.name} (${roleTag})`;
+        teacherCardFilter.appendChild(opt);
+      });
+      teacherCardFilter.value = guruOnlyList.length > 0 ? 'GURU_ONLY' : 'ALL';
+    }
+
+    renderTeacherCardPreviewContent();
+    modalPrintTeacherCardsPreview.classList.remove('hidden');
+  }
+
+  function closeTeacherCardPreviewModal() {
+    if (modalPrintTeacherCardsPreview) modalPrintTeacherCardsPreview.classList.add('hidden');
+  }
+
+  if (btnPrintTeacherCards) btnPrintTeacherCards.addEventListener('click', openTeacherCardPreviewModal);
+  if (teacherCardFilter) {
+    teacherCardFilter.addEventListener('change', (e) => renderTeacherCardPreviewContent(e.target.value));
+  }
+  if (btnCloseTeacherCardPreview) btnCloseTeacherCardPreview.addEventListener('click', closeTeacherCardPreviewModal);
+  if (btnCancelTeacherCardPreview) btnCancelTeacherCardPreview.addEventListener('click', closeTeacherCardPreviewModal);
+
+  if (btnExecuteDirectPrintTeacherCards) {
+    btnExecuteDirectPrintTeacherCards.addEventListener('click', () => {
+      const teachers = getFilteredPreviewCardTeachers();
+      closeTeacherCardPreviewModal();
+      window.cbtAdmin.printTeacherCards(teachers, window.examEngine.config.examTitle);
+    });
+  }
+
+  if (btnDownloadTeacherCardsPdf) {
+    btnDownloadTeacherCardsPdf.addEventListener('click', async () => {
+      const teachers = getFilteredPreviewCardTeachers();
+      const prevHtml = btnDownloadTeacherCardsPdf.innerHTML;
+      btnDownloadTeacherCardsPdf.disabled = true;
+      btnDownloadTeacherCardsPdf.innerHTML = '<span>⏳ Membuat PDF...</span>';
+      try {
+        await window.cbtAdmin.downloadTeacherCardsPdf(teachers, window.examEngine.config.examTitle);
+        closeTeacherCardPreviewModal();
+      } finally {
+        btnDownloadTeacherCardsPdf.disabled = false;
+        btnDownloadTeacherCardsPdf.innerHTML = prevHtml;
       }
     });
   }

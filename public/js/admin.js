@@ -2880,6 +2880,265 @@ class CBTAdmin {
       })
       .sort((a, b) => String(a.teacher.name || '').localeCompare(String(b.teacher.name || ''), 'id'));
   }
+
+  // ===================== CETAK & DOWNLOAD KARTU LOGIN GURU (9,0 x 5,3 CM) =====================
+  generateTeacherCardsHtml(list = this.teachers, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER", startIndex = 0) {
+    const teachersList = Array.isArray(list) ? list : [];
+    if (teachersList.length === 0) {
+      return '<div class="p-8 text-center text-slate-400 font-semibold">Belum ada data guru untuk ditampilkan.</div>';
+    }
+
+    const cfg = this.getSchoolConfig();
+    const logoLeftHtml = cfg.logoLeft
+      ? `<img src="${cfg.logoLeft}" alt="Logo Kiri" style="width:24px; height:24px; object-fit:contain; flex-shrink:0;">`
+      : `<div style="width:23px; height:23px; border-radius:4px; background:#1e3a8a; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:7.5px; flex-shrink:0;">DINAS</div>`;
+
+    const logoRightHtml = cfg.logoRight
+      ? `<img src="${cfg.logoRight}" alt="Logo Kanan" style="width:24px; height:24px; object-fit:contain; flex-shrink:0;">`
+      : `<div style="width:23px; height:23px; border-radius:50%; background:#059669; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:7.5px; flex-shrink:0;">SMP</div>`;
+
+    const safeSubtitle = this.escapePrintHtml(cfg.schoolSubtitle || 'PEMERINTAH KABUPATEN MOJOKERTO — DINAS PENDIDIKAN');
+    const safeSchoolName = this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET');
+    const safeExamTitle = this.escapePrintHtml(examTitle || 'UJIAN SEKOLAH BERBASIS KOMPUTER');
+    const safeCity = this.escapePrintHtml(cfg.city || 'Pacet');
+    const safeDate = this.escapePrintHtml(cfg.date || '');
+    const safeHeadmaster = this.escapePrintHtml(cfg.headmasterName || '');
+    const safeHeadmasterNip = this.escapePrintHtml(cfg.headmasterNip || '');
+
+    return teachersList.map((t, idx) => {
+      const isAdmin = t && (t.role === 'admin' || t.id === 'admin');
+      const roleLabel = isAdmin ? 'PROKTOR / ADMIN' : 'GURU MAPEL';
+      const roleDetail = isAdmin ? 'Proktor Utama / Admin' : 'Guru Mata Pelajaran';
+      const badgeBg = isAdmin ? '#f3e8ff' : '#dbeafe';
+      const badgeText = isAdmin ? '#6b21a8' : '#1d4ed8';
+      const badgeBorder = isAdmin ? '#c084fc' : '#93c5fd';
+
+      const nipText = this.escapePrintHtml(t?.nip || (isAdmin ? 'admin' : '-'));
+      const nameText = this.escapePrintHtml(t?.name || '-');
+      const subjectTokens = typeof this.splitSubjectTokens === 'function' ? this.splitSubjectTokens(t?.subject || '') : [];
+      const subjectText = this.escapePrintHtml(subjectTokens.length > 0 ? subjectTokens.join(', ') : (t?.subject || (isAdmin ? 'Semua Mapel' : '-')));
+      const parsedClasses = t?.classes && typeof this.parseTeacherClasses === 'function' ? this.parseTeacherClasses(t.classes) : [];
+      const classesText = this.escapePrintHtml(isAdmin ? 'Semua Kelas' : (parsedClasses.length > 0 ? parsedClasses.join(', ') : (t?.classes || 'Semua Kelas')));
+      const pinText = this.escapePrintHtml(t?.pin || (isAdmin ? 'admin123' : 'guru123'));
+
+      return `
+      <div class="exam-card-9x5" style="width:9.0cm; height:5.3cm; max-width:9.0cm; max-height:5.3cm; border:1.6px solid #0f172a; border-radius:8px; padding:5px 7px; background:#ffffff; box-sizing:border-box; display:flex; flex-direction:column; justify-content:space-between; font-family:'Plus Jakarta Sans', Arial, sans-serif; overflow:hidden; position:relative; page-break-inside:avoid; break-inside:avoid;">
+
+        <!-- KOP SURAT KARTU LOGIN GURU -->
+        <div style="border-bottom:1.5px solid #0f172a; padding-bottom:2.5px; display:flex; align-items:center; justify-content:space-between; gap:5px;">
+          ${logoLeftHtml}
+          <div style="flex:1; text-align:center; min-width:0;">
+            <div style="font-size:6.4px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.2px; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeSubtitle}</div>
+            <div style="font-size:8.8px; font-weight:900; color:#0f172a; text-transform:uppercase; letter-spacing:0.2px; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeSchoolName}</div>
+            <div style="font-size:6.6px; font-weight:800; color:${isAdmin ? '#6b21a8' : '#2563eb'}; text-transform:uppercase; letter-spacing:0.2px; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">KARTU LOGIN ${isAdmin ? 'PROKTOR / ADMIN' : 'GURU'} &bull; ${safeExamTitle}</div>
+          </div>
+          ${logoRightHtml}
+        </div>
+
+        <!-- ISI DATA AKUN LOGIN GURU -->
+        <div style="display:flex; gap:5px; align-items:stretch; margin-top:2px; flex:1; min-height:0;">
+
+          <div style="flex:1; min-width:0; color:#0f172a;">
+            <table style="width:100%; border-collapse:collapse; font-size:7.4px; line-height:1.22;">
+              <tr>
+                <td style="width:52px; color:#475569; font-weight:600; padding:1px 0; white-space:nowrap; vertical-align:top;">NIP / ID</td>
+                <td style="width:6px; font-weight:700; padding:1px 0; vertical-align:top;">:</td>
+                <td style="font-weight:900; color:#1d4ed8; font-family:monospace; font-size:8px; padding:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px;">${nipText}</td>
+              </tr>
+              <tr>
+                <td style="color:#475569; font-weight:600; padding:1px 0; white-space:nowrap; vertical-align:top;">Nama Guru</td>
+                <td style="font-weight:700; padding:1px 0; vertical-align:top;">:</td>
+                <td style="font-weight:800; color:#0f172a; padding:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px;">${nameText}</td>
+              </tr>
+              <tr>
+                <td style="color:#475569; font-weight:600; padding:1px 0; white-space:nowrap; vertical-align:top;">Status</td>
+                <td style="font-weight:700; padding:1px 0; vertical-align:top;">:</td>
+                <td style="color:#1e293b; font-weight:700; padding:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px;">${roleDetail}</td>
+              </tr>
+              <tr>
+                <td style="color:#475569; font-weight:600; padding:1px 0; white-space:nowrap; vertical-align:top;">Mapel</td>
+                <td style="font-weight:700; padding:1px 0; vertical-align:top;">:</td>
+                <td style="color:#0f172a; font-weight:700; padding:1px 0; max-width:170px;">
+                  <div style="font-size:7px; line-height:1.2; max-height:19px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;">${subjectText}</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="color:#475569; font-weight:600; padding:1px 0; white-space:nowrap; vertical-align:top;">Kelas</td>
+                <td style="font-weight:700; padding:1px 0; vertical-align:top;">:</td>
+                <td style="font-weight:800; color:#4338ca; padding:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px; font-size:7.1px;">${classesText}</td>
+              </tr>
+              <tr>
+                <td style="color:#475569; font-weight:600; padding:1px 0; white-space:nowrap; vertical-align:top;">Password</td>
+                <td style="font-weight:700; padding:1px 0; vertical-align:top;">:</td>
+                <td style="font-weight:900; color:#047857; font-family:monospace; font-size:8px; padding:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px;">${pinText}</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- KOLOM KANAN: BADGE ROLE + TANDA TANGAN KEPALA SEKOLAH -->
+          <div style="width:74px; display:flex; flex-direction:column; align-items:center; justify-content:space-between; flex-shrink:0;">
+            <div style="width:100%; border:1px solid ${badgeBorder}; background:${badgeBg}; color:${badgeText}; border-radius:5px; padding:3px 2px; text-align:center;">
+              <div style="font-size:6.2px; font-weight:900; letter-spacing:0.2px; line-height:1.1;">${roleLabel}</div>
+              <div style="font-size:5.5px; font-weight:700; color:#475569; margin-top:1.5px; line-height:1.1;">Tab Admin/Guru</div>
+            </div>
+
+            <div style="text-align:center; font-size:5.9px; line-height:1.12; margin-top:2px; width:100%;">
+              <div style="color:#475569; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeCity}, ${safeDate}</div>
+              <div style="font-weight:700; color:#0f172a;">Kepala Sekolah,</div>
+              <div style="height:11px;"></div>
+              <div style="font-weight:800; text-decoration:underline; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:74px;">${safeHeadmaster}</div>
+              <div style="color:#64748b; font-size:5.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:74px;">NIP. ${safeHeadmasterNip}</div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- FOOTER KARTU -->
+        <div style="border-top:0.8px dashed #cbd5e1; padding-top:2px; display:flex; justify-content:flex-end; font-size:6.1px; color:#64748b; font-weight:600;">
+          <span>No. Urut: ${startIndex + idx + 1}</span>
+        </div>
+
+      </div>
+    `;
+    }).join('');
+  }
+
+  buildPaginatedTeacherCardsPagesHtml(list, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
+    const items = Array.isArray(list) ? list : [];
+    const perPage = 8; // 2 kolom x 4 baris agar presisi di A4 dan tidak pernah terpotong
+    const totalPages = Math.max(1, Math.ceil(items.length / perPage));
+    const cfg = this.getSchoolConfig();
+    const safeSchoolName = this.escapePrintHtml(cfg.schoolName || 'SMP NEGERI 2 PACET');
+    const stampText = this.escapePrintHtml(this.getPrintStampText());
+    const pages = [];
+
+    for (let p = 0; p < totalPages; p++) {
+      const startIndex = p * perPage;
+      const chunk = items.slice(startIndex, startIndex + perPage);
+      const cardsHtml = this.generateTeacherCardsHtml(chunk, examTitle, startIndex);
+      const pageBadge = totalPages > 1 ? ` &bull; Halaman ${p + 1} dari ${totalPages}` : '';
+      const breakStyle = p < totalPages - 1 ? 'page-break-after:always; break-after:page;' : '';
+
+      pages.push(`
+        <div class="cbt-cards-page-sheet" style="width:210mm; margin:0 auto; padding:6mm 10mm; box-sizing:border-box; font-family:'Plus Jakarta Sans', Arial, sans-serif; background:#ffffff; color:#0f172a; ${breakStyle}">
+          <div style="text-align:center; border-bottom:1.8px solid #0f172a; padding-bottom:4px; margin-bottom:7px;">
+            <h2 style="font-size:12px; font-weight:900; margin:0; text-transform:uppercase; color:#0f172a;">${safeSchoolName} &mdash; KARTU LOGIN AKUN GURU (CBT)</h2>
+            <p style="font-size:8.5px; color:#64748b; margin:2px 0 0 0;">Total: ${items.length} Akun${pageBadge}</p>
+          </div>
+          <div class="cards-grid-print" style="display:grid; grid-template-columns: repeat(2, 9.0cm); justify-content:center; gap:4.5mm 6mm;">
+            ${cardsHtml}
+          </div>
+          <div class="cbt-print-footer-note" style="margin-top:8px; padding-top:3px; border-top:0.5px solid #cbd5e1; font-size:8px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${stampText}</div>
+        </div>
+      `);
+    }
+
+    return pages;
+  }
+
+  printTeacherCards(teachersToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
+    const printArea = document.getElementById('printableCardsArea');
+    if (!printArea) return;
+
+    const list = Array.isArray(teachersToPrint) ? teachersToPrint : this.getAllTeachers();
+    if (list.length === 0) {
+      alert("Belum ada data guru untuk dicetak kartu loginnya.");
+      return;
+    }
+
+    const pagesHtml = this.buildPaginatedTeacherCardsPagesHtml(list, examTitle);
+    printArea.innerHTML = pagesHtml.join('');
+
+    document.body.classList.add('printing-cards');
+    printArea.classList.remove('hidden');
+
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        document.body.classList.remove('printing-cards');
+        printArea.classList.add('hidden');
+      }, 1000);
+    }, 250);
+  }
+
+  async downloadTeacherCardsPdf(teachersToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
+    const list = Array.isArray(teachersToPrint) ? teachersToPrint : this.getAllTeachers();
+    if (list.length === 0) {
+      alert("Belum ada data guru untuk di-download kartu loginnya.");
+      return;
+    }
+
+    if (typeof html2pdf === 'undefined') {
+      this.printTeacherCards(list, examTitle);
+      return;
+    }
+
+    const cfg = this.getSchoolConfig();
+    const pagesHtml = this.buildPaginatedTeacherCardsPagesHtml(list, examTitle);
+    const filename = `Kartu_Login_Guru_CBT_${(cfg.schoolName || 'SMPN2Pacet').replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+    const prevScrollX = window.scrollX || window.pageXOffset || 0;
+    const prevScrollY = window.scrollY || window.pageYOffset || 0;
+
+    try {
+      const sheetOpt = {
+        margin: [0, 0, 0, 0],
+        filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          scrollX: 0,
+          scrollY: 0,
+          backgroundColor: '#ffffff',
+          onclone: (clonedDoc) => {
+            const container = clonedDoc.querySelector('.html2pdf__container');
+            if (container) {
+              container.style.left = '0px';
+              container.style.right = 'auto';
+              container.style.top = '0px';
+              container.style.margin = '0px';
+            }
+          }
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      const seedHtml = '<div style="width:10px;height:10px;background:#ffffff;"></div>';
+      const pdfDoc = await html2pdf().set(sheetOpt).from(seedHtml).toPdf().get('pdf');
+
+      for (let i = 0; i < pagesHtml.length; i++) {
+        const cleanPageHtml = pagesHtml[i]
+          .replace(/page-break-after:\s*always;\s*/gi, '')
+          .replace(/break-after:\s*page;\s*/gi, '');
+        const canvas = await html2pdf().set(sheetOpt).from(cleanPageHtml).toCanvas().get('canvas');
+        const imgData = canvas.toDataURL('image/jpeg', 0.98);
+
+        if (i > 0) {
+          pdfDoc.addPage('a4', 'portrait');
+        }
+
+        const pageW = 210;
+        const maxPageH = 295;
+        const naturalH = (canvas.height * pageW) / canvas.width;
+        if (naturalH > maxPageH) {
+          const ratio = maxPageH / naturalH;
+          const fitW = pageW * ratio;
+          const offsetX = (pageW - fitW) / 2;
+          pdfDoc.addImage(imgData, 'JPEG', offsetX, 0, fitW, maxPageH);
+        } else {
+          pdfDoc.addImage(imgData, 'JPEG', 0, 0, pageW, naturalH);
+        }
+      }
+
+      pdfDoc.save(filename);
+    } catch (err) {
+      console.error("Gagal download PDF kartu guru:", err);
+      this.printTeacherCards(list, examTitle);
+    } finally {
+      window.scrollTo(prevScrollX, prevScrollY);
+    }
+  }
 }
 
 window.cbtAdmin = new CBTAdmin();
