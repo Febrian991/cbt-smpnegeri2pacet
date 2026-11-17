@@ -5353,7 +5353,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Modal Preview, Download PDF, & Cetak Kartu Peserta (9,0 x 5,3 cm)
+  // Modal Preview, Download PDF, & Cetak Kartu Peserta
   const modalPrintCardsPreview = document.getElementById('modalPrintCardsPreview');
   const cardPreviewContainer = document.getElementById('cardPreviewContainer');
   const cardPreviewClassFilter = document.getElementById('cardPreviewClassFilter');
@@ -5361,6 +5361,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCloseCardPreview = document.getElementById('btnCloseCardPreview');
   const btnCancelCardPreview = document.getElementById('btnCancelCardPreview');
   const btnExecuteDirectPrintCards = document.getElementById('btnExecuteDirectPrintCards');
+  const btnDownloadCardsPerClassPdf = document.getElementById('btnDownloadCardsPerClassPdf');
   const btnDownloadCardsPdf = document.getElementById('btnDownloadCardsPdf');
 
   function getFilteredPreviewCardStudents() {
@@ -5370,6 +5371,14 @@ document.addEventListener('DOMContentLoaded', () => {
       students = students.filter(s => String(s.class).trim().toUpperCase() === String(selectedClass).trim().toUpperCase());
     }
     return students;
+  }
+
+  function updateCardModalButtonLabels(selectedClass = "ALL") {
+    if (btnDownloadCardsPerClassPdf) {
+      btnDownloadCardsPerClassPdf.innerHTML = selectedClass === "ALL"
+        ? '<span>📥 Download PDF Per Kelas</span>'
+        : `<span>📥 Download PDF Kelas ${escapeHtmlSafe(selectedClass)}</span>`;
+    }
   }
 
   function openCardPreviewModal() {
@@ -5382,11 +5391,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (cardPreviewClassFilter) {
       const classes = window.studentManager.getAllClasses();
-      cardPreviewClassFilter.innerHTML = '<option value="ALL">Semua Kelas (Semua Kartu)</option>';
+      cardPreviewClassFilter.innerHTML = `<option value="ALL">Semua Kelas (${students.length} Siswa)</option>`;
       classes.forEach(c => {
+        const count = students.filter(s => String(s.class).trim().toUpperCase() === String(c).trim().toUpperCase()).length;
         const opt = document.createElement('option');
         opt.value = c;
-        opt.innerText = `Kelas ${c}`;
+        opt.innerText = `Kelas ${c} (${count} Siswa)`;
         cardPreviewClassFilter.appendChild(opt);
       });
       cardPreviewClassFilter.value = "ALL";
@@ -5398,13 +5408,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderCardPreviewContent(selectedClass = "ALL") {
     if (!cardPreviewContainer || !window.studentManager) return;
-    let students = window.studentManager.getAllStudents();
+    const allStudents = window.studentManager.getAllStudents();
+    let students = allStudents;
     if (selectedClass !== "ALL") {
-      students = students.filter(s => String(s.class).trim().toUpperCase() === String(selectedClass).trim().toUpperCase());
+      students = allStudents.filter(s => String(s.class).trim().toUpperCase() === String(selectedClass).trim().toUpperCase());
     }
+
+    updateCardModalButtonLabels(selectedClass);
 
     if (cardPreviewCountBadge) {
       cardPreviewCountBadge.innerText = `${students.length} Kartu (${selectedClass === "ALL" ? "Semua Kelas" : "Kelas " + selectedClass})`;
+    }
+
+    if (selectedClass === "ALL") {
+      const classes = window.studentManager.getAllClasses();
+      if (classes.length > 1) {
+        const groupedHtml = classes.map(cls => {
+          const clsStudents = allStudents.filter(s => String(s.class).trim().toUpperCase() === String(cls).trim().toUpperCase());
+          if (clsStudents.length === 0) return '';
+          const clsCardsHtml = window.studentManager.generateCardsHtml(clsStudents, window.examEngine.config.examTitle);
+          return `
+            <div class="mb-6 last:mb-0">
+              <div class="max-w-4xl mx-auto mb-3 px-3.5 py-2 rounded-xl bg-white border border-slate-200 flex items-center justify-between shadow-xs">
+                <span class="text-xs font-extrabold text-slate-800">Kelas ${escapeHtmlSafe(cls)}</span>
+                <span class="text-[11px] font-bold text-blue-700">${clsStudents.length} Siswa</span>
+              </div>
+              <div class="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4 justify-items-center max-w-4xl mx-auto">
+                ${clsCardsHtml}
+              </div>
+            </div>
+          `;
+        }).join('');
+        cardPreviewContainer.innerHTML = groupedHtml;
+        return;
+      }
     }
 
     const cardsHtml = window.studentManager.generateCardsHtml(students, window.examEngine.config.examTitle);
@@ -5427,23 +5464,72 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnExecuteDirectPrintCards) {
     btnExecuteDirectPrintCards.addEventListener('click', () => {
+      const selectedClass = cardPreviewClassFilter ? cardPreviewClassFilter.value : "ALL";
       const students = getFilteredPreviewCardStudents();
       closeCardPreviewModal();
-      window.studentManager.printExamCards(students, window.examEngine.config.examTitle);
+      window.studentManager.printExamCards(students, window.examEngine.config.examTitle, {
+        classLabel: selectedClass === "ALL" ? "" : selectedClass,
+        groupByClass: selectedClass === "ALL"
+      });
+    });
+  }
+
+  if (btnDownloadCardsPerClassPdf) {
+    btnDownloadCardsPerClassPdf.addEventListener('click', async () => {
+      const selectedClass = cardPreviewClassFilter ? cardPreviewClassFilter.value : "ALL";
+      const allStudents = window.studentManager.getAllStudents();
+      const classes = window.studentManager.getAllClasses();
+
+      if (selectedClass === "ALL" && classes.length > 1) {
+        if (!confirm(`Akan mengunduh ${classes.length} file PDF terpisah (1 file PDF untuk setiap kelas: ${classes.join(', ')}). Lanjutkan?`)) {
+          return;
+        }
+      }
+
+      btnDownloadCardsPerClassPdf.disabled = true;
+      if (btnDownloadCardsPdf) btnDownloadCardsPdf.disabled = true;
+      try {
+        if (selectedClass !== "ALL") {
+          btnDownloadCardsPerClassPdf.innerHTML = `<span>⏳ Membuat PDF ${escapeHtmlSafe(selectedClass)}...</span>`;
+          const students = getFilteredPreviewCardStudents();
+          await window.studentManager.downloadCardsPdf(students, window.examEngine.config.examTitle, {
+            classLabel: selectedClass,
+            groupByClass: false
+          });
+        } else {
+          await window.studentManager.downloadCardsPerClassSeparatePdfs(
+            allStudents,
+            window.examEngine.config.examTitle,
+            (done, total, cls) => {
+              btnDownloadCardsPerClassPdf.innerHTML = `<span>⏳ PDF ${done}/${total} (${escapeHtmlSafe(cls)})...</span>`;
+            }
+          );
+        }
+        closeCardPreviewModal();
+      } finally {
+        btnDownloadCardsPerClassPdf.disabled = false;
+        if (btnDownloadCardsPdf) btnDownloadCardsPdf.disabled = false;
+        updateCardModalButtonLabels(cardPreviewClassFilter ? cardPreviewClassFilter.value : "ALL");
+      }
     });
   }
 
   if (btnDownloadCardsPdf) {
     btnDownloadCardsPdf.addEventListener('click', async () => {
-      const students = getFilteredPreviewCardStudents();
+      const students = window.studentManager.getAllStudents();
       const prevHtml = btnDownloadCardsPdf.innerHTML;
       btnDownloadCardsPdf.disabled = true;
-      btnDownloadCardsPdf.innerHTML = '<span>⏳ Membuat PDF...</span>';
+      if (btnDownloadCardsPerClassPdf) btnDownloadCardsPerClassPdf.disabled = true;
+      btnDownloadCardsPdf.innerHTML = '<span>⏳ Membuat PDF Semua...</span>';
       try {
-        await window.studentManager.downloadCardsPdf(students, window.examEngine.config.examTitle);
+        await window.studentManager.downloadCardsPdf(students, window.examEngine.config.examTitle, {
+          classLabel: "",
+          groupByClass: true
+        });
         closeCardPreviewModal();
       } finally {
         btnDownloadCardsPdf.disabled = false;
+        if (btnDownloadCardsPerClassPdf) btnDownloadCardsPerClassPdf.disabled = false;
         btnDownloadCardsPdf.innerHTML = prevHtml;
       }
     });

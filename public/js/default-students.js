@@ -100,12 +100,28 @@ class StudentManager {
     return this.students.find(s => String(s.nisn).trim() === cleanNisn) || null;
   }
 
+  compareClassNames(a, b) {
+    const parseCls = (val) => {
+      const s = String(val || '').trim();
+      const m = s.match(/^(VIII|VII|IX|[0-9]+)\s*[-\s_]*([A-Za-z0-9]*)$/i);
+      if (!m) return { grade: 99, suffix: s.toUpperCase() };
+      const rawGrade = m[1].toUpperCase();
+      const romanMap = { VII: 7, VIII: 8, IX: 9 };
+      const grade = romanMap[rawGrade] !== undefined ? romanMap[rawGrade] : (parseInt(rawGrade, 10) || 99);
+      return { grade, suffix: String(m[2] || '').toUpperCase() };
+    };
+    const pa = parseCls(a);
+    const pb = parseCls(b);
+    if (pa.grade !== pb.grade) return pa.grade - pb.grade;
+    return pa.suffix.localeCompare(pb.suffix, 'id', { numeric: true });
+  }
+
   getAllClasses() {
     const classSet = new Set();
     this.students.forEach(s => {
       if (s.class) classSet.add(String(s.class).trim());
     });
-    return Array.from(classSet).sort();
+    return Array.from(classSet).sort((a, b) => this.compareClassNames(a, b));
   }
 
   authenticateStudent(nisn, password) {
@@ -570,40 +586,73 @@ class StudentManager {
     return `Dokumen ini dicetak secara otomatis melalui sistem aplikasi CBT - Computer Based Test. pada ${d} ${m} ${y} pukul ${hh}:${mm} WIB.`;
   }
 
-  buildPaginatedCardsPagesHtml(list, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
+  buildPaginatedCardsPagesHtml(list, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER", options = {}) {
     const items = Array.isArray(list) ? list : [];
     const perPage = 8; // 2 kolom x 4 baris agar presisi di A4 dan tidak pernah terpotong
-    const totalPages = Math.max(1, Math.ceil(items.length / perPage));
     const cfg = this.getSchoolConfig();
     const safeSchoolName = this.escapeHtml(cfg.schoolName || 'SMP NEGERI 2 PACET');
     const safeStamp = this.escapeHtml(this.getCardsFooterNote());
-    const pages = [];
 
-    for (let p = 0; p < totalPages; p++) {
-      const startIndex = p * perPage;
-      const chunk = items.slice(startIndex, startIndex + perPage);
-      const cardsHtml = this.generateCardsHtml(chunk, examTitle, startIndex);
-      const pageBadge = totalPages > 1 ? ` &bull; Halaman ${p + 1} dari ${totalPages}` : '';
-      const breakStyle = p < totalPages - 1 ? 'page-break-after:always; break-after:page;' : '';
+    const explicitClass = options && options.classLabel ? String(options.classLabel).trim() : '';
+    const shouldGroupByClass = Boolean(!explicitClass && options && options.groupByClass !== false && items.length > 0);
 
-      pages.push(`
-        <div class="cbt-cards-page-sheet" style="width:210mm; margin:0 auto; padding:6mm 10mm; box-sizing:border-box; font-family:'Plus Jakarta Sans', Arial, sans-serif; background:#ffffff; color:#0f172a; ${breakStyle}">
-          <div style="text-align:center; border-bottom:1.8px solid #0f172a; padding-bottom:4px; margin-bottom:7px;">
-            <h2 style="font-size:12px; font-weight:900; margin:0; text-transform:uppercase; color:#0f172a;">${safeSchoolName} &mdash; KARTU PESERTA UJIAN SEKOLAH (CBT)</h2>
-            <p style="font-size:8.5px; color:#64748b; margin:2px 0 0 0;">Total: ${items.length} Peserta${pageBadge}</p>
-          </div>
-          <div class="cards-grid-print" style="display:grid; grid-template-columns: repeat(2, 9.0cm); justify-content:center; gap:4.5mm 6mm;">
-            ${cardsHtml}
-          </div>
-          <div class="cbt-print-footer-note" style="margin-top:8px; padding-top:3px; border-top:0.5px solid #cbd5e1; font-size:8px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeStamp}</div>
-        </div>
-      `);
+    let sections = [];
+    if (shouldGroupByClass) {
+      const grouped = new Map();
+      items.forEach(s => {
+        const cls = String(s.class || 'Umum').trim() || 'Umum';
+        if (!grouped.has(cls)) grouped.set(cls, []);
+        grouped.get(cls).push(s);
+      });
+      const sortedClassKeys = Array.from(grouped.keys()).sort((a, b) => this.compareClassNames(a, b));
+      sections = sortedClassKeys.map(cls => ({
+        classLabel: cls,
+        students: grouped.get(cls)
+      }));
+    } else {
+      sections = [{
+        classLabel: explicitClass,
+        students: items
+      }];
     }
+
+    const totalPagesAll = sections.reduce((sum, sec) => sum + Math.max(1, Math.ceil(sec.students.length / perPage)), 0);
+    const pages = [];
+    let globalPageIndex = 0;
+
+    sections.forEach(sec => {
+      const secItems = sec.students;
+      const secPages = Math.max(1, Math.ceil(secItems.length / perPage));
+      const classPrefix = sec.classLabel ? `Kelas ${this.escapeHtml(sec.classLabel)} &bull; ` : '';
+
+      for (let p = 0; p < secPages; p++) {
+        const startIndex = p * perPage;
+        const chunk = secItems.slice(startIndex, startIndex + perPage);
+        const cardsHtml = this.generateCardsHtml(chunk, examTitle, startIndex);
+        const pageBadge = secPages > 1 ? ` &bull; Halaman ${p + 1} dari ${secPages}` : '';
+        const isLastPageOverall = globalPageIndex === totalPagesAll - 1;
+        const breakStyle = !isLastPageOverall ? 'page-break-after:always; break-after:page;' : '';
+
+        pages.push(`
+          <div class="cbt-cards-page-sheet" style="width:210mm; margin:0 auto; padding:6mm 10mm; box-sizing:border-box; font-family:'Plus Jakarta Sans', Arial, sans-serif; background:#ffffff; color:#0f172a; ${breakStyle}">
+            <div style="text-align:center; border-bottom:1.8px solid #0f172a; padding-bottom:4px; margin-bottom:7px;">
+              <h2 style="font-size:12px; font-weight:900; margin:0; text-transform:uppercase; color:#0f172a;">${safeSchoolName} &mdash; KARTU PESERTA UJIAN SEKOLAH (CBT)</h2>
+              <p style="font-size:8.5px; color:#64748b; margin:2px 0 0 0;">${classPrefix}Total: ${secItems.length} Peserta${pageBadge}</p>
+            </div>
+            <div class="cards-grid-print" style="display:grid; grid-template-columns: repeat(2, 9.0cm); justify-content:center; gap:4.5mm 6mm;">
+              ${cardsHtml}
+            </div>
+            <div class="cbt-print-footer-note" style="margin-top:8px; padding-top:3px; border-top:0.5px solid #cbd5e1; font-size:8px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeStamp}</div>
+          </div>
+        `);
+        globalPageIndex++;
+      }
+    });
 
     return pages;
   }
 
-  printExamCards(studentsToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
+  printExamCards(studentsToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER", options = {}) {
     const printArea = document.getElementById('printableCardsArea');
     if (!printArea) return;
 
@@ -613,7 +662,7 @@ class StudentManager {
       return;
     }
 
-    const pagesHtml = this.buildPaginatedCardsPagesHtml(list, examTitle);
+    const pagesHtml = this.buildPaginatedCardsPagesHtml(list, examTitle, options);
     printArea.innerHTML = pagesHtml.join('');
 
     document.body.classList.add('printing-cards');
@@ -628,7 +677,7 @@ class StudentManager {
     }, 250);
   }
 
-  async downloadCardsPdf(studentsToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER") {
+  async downloadCardsPdf(studentsToPrint, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER", options = {}) {
     const list = studentsToPrint || this.students;
     if (list.length === 0) {
       alert("Belum ada data siswa untuk di-download kartu ujiannya.");
@@ -636,13 +685,18 @@ class StudentManager {
     }
 
     if (typeof html2pdf === 'undefined') {
-      this.printExamCards(list, examTitle);
+      this.printExamCards(list, examTitle, options);
       return;
     }
 
     const cfg = this.getSchoolConfig();
-    const pagesHtml = this.buildPaginatedCardsPagesHtml(list, examTitle);
-    const filename = `Kartu_Peserta_CBT_${(cfg.schoolName || 'SMPN2Pacet').replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+    const pagesHtml = this.buildPaginatedCardsPagesHtml(list, examTitle, options);
+    const schoolSlug = (cfg.schoolName || 'SMPN2Pacet').replace(/\s+/g, '_');
+    const classLabel = options && options.classLabel ? String(options.classLabel).trim() : '';
+    const scopeSlug = classLabel
+      ? `Kelas_${classLabel.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+      : 'Semua_Kelas';
+    const filename = `Kartu_Peserta_CBT_${scopeSlug}_${schoolSlug}_${Date.now()}.pdf`;
     const prevScrollX = window.scrollX || window.pageXOffset || 0;
     const prevScrollY = window.scrollY || window.pageYOffset || 0;
 
@@ -701,9 +755,36 @@ class StudentManager {
       pdfDoc.save(filename);
     } catch (err) {
       console.error("Gagal download PDF kartu peserta:", err);
-      this.printExamCards(list, examTitle);
+      this.printExamCards(list, examTitle, options);
     } finally {
       window.scrollTo(prevScrollX, prevScrollY);
+    }
+  }
+
+  async downloadCardsPerClassSeparatePdfs(studentsList, examTitle = "UJIAN SEKOLAH BERBASIS KOMPUTER", onProgress) {
+    const list = Array.isArray(studentsList) && studentsList.length > 0 ? studentsList : this.students;
+    if (list.length === 0) {
+      alert("Belum ada data siswa untuk di-download kartu ujiannya.");
+      return;
+    }
+
+    const grouped = new Map();
+    list.forEach(s => {
+      const cls = String(s.class || 'Umum').trim() || 'Umum';
+      if (!grouped.has(cls)) grouped.set(cls, []);
+      grouped.get(cls).push(s);
+    });
+    const sortedClasses = Array.from(grouped.keys()).sort((a, b) => this.compareClassNames(a, b));
+
+    for (let i = 0; i < sortedClasses.length; i++) {
+      const cls = sortedClasses[i];
+      if (typeof onProgress === 'function') {
+        onProgress(i + 1, sortedClasses.length, cls);
+      }
+      await this.downloadCardsPdf(grouped.get(cls), examTitle, { classLabel: cls, groupByClass: false });
+      if (i < sortedClasses.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 450));
+      }
     }
   }
 }
