@@ -2057,8 +2057,8 @@ document.addEventListener('DOMContentLoaded', () => {
       : [];
     if (teacherClasses.length > 0) {
       allStudents = allStudents.filter(st => {
-        const cls = String(st.class || '').trim().toUpperCase();
-        return teacherClasses.some(tc => cls === tc || cls.startsWith(tc));
+        const cls = String(st.class || '').trim();
+        return cls && window.examEngine.matchesClassLevel(teacherClasses.join(', '), cls);
       });
     }
     const uniqueClasses = new Set(allStudents.map(s => String(s.class || '').trim()).filter(Boolean));
@@ -2078,8 +2078,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const tSubs = window.cbtAdmin.getTeacherSubjectsList(currentTeacher).map(s => s.toLowerCase());
       liveSessions = liveSessions.filter(sess => {
         const subOk = tSubs.length > 0 && tSubs.some(ts => window.examEngine.matchesSubject(sess.subject, ts));
-        const cls = String(sess.class_name || '').trim().toUpperCase();
-        const clsOk = teacherClasses.length === 0 || teacherClasses.some(tc => cls === tc || cls.startsWith(tc));
+        const cls = String(sess.class_name || '').trim();
+        const clsOk = teacherClasses.length === 0 || (cls && window.examEngine.matchesClassLevel(teacherClasses.join(', '), cls));
         return subOk && clsOk;
       });
     }
@@ -2560,8 +2560,11 @@ document.addEventListener('DOMContentLoaded', () => {
     window.cbtAdmin.setSubjectFilter(subjSelect.value || 'ALL');
 
     const studentClasses = window.studentManager ? window.studentManager.getAllClasses() : [];
+    const matchedStudentClasses = assignedClasses.length > 0
+      ? studentClasses.filter(c => window.examEngine.matchesClassLevel(assignedClasses.join(', '), c))
+      : studentClasses;
     const classesToShow = assignedClasses.length > 0
-      ? Array.from(new Set([...assignedClasses, ...studentClasses.filter(c => assignedClasses.some(ac => String(c).toUpperCase().startsWith(ac)))])).sort()
+      ? (matchedStudentClasses.length > 0 ? matchedStudentClasses : assignedClasses)
       : studentClasses;
 
     classSelect.innerHTML = assignedClasses.length > 0
@@ -2990,8 +2993,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (monClassEl) {
       const prevMonCls = monClassEl.value;
       const studentClasses = window.studentManager ? window.studentManager.getAllClasses() : [];
+      const matchedStudentClasses = assignedClasses.length > 0
+        ? studentClasses.filter(c => window.examEngine.matchesClassLevel(assignedClasses.join(', '), c))
+        : studentClasses;
       const classesToShow = assignedClasses.length > 0
-        ? Array.from(new Set([...assignedClasses, ...studentClasses.filter(c => assignedClasses.some(ac => String(c).toUpperCase().startsWith(ac)))])).sort()
+        ? (matchedStudentClasses.length > 0 ? matchedStudentClasses : assignedClasses)
         : studentClasses;
 
       monClassEl.innerHTML = assignedClasses.length > 0
@@ -3167,12 +3173,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const subOk = teacherSubjects.length > 0 && teacherSubjects.some(ts => window.examEngine.matchesSubject(row.subject, ts));
         if (!subOk) return false;
         if (assignedClasses.length > 0) {
-          const stuCls = String(row.class || '').trim().toUpperCase();
-          if (!assignedClasses.some(ac => stuCls === ac || stuCls.startsWith(ac))) return false;
+          const stuCls = String(row.class || '').trim();
+          if (!stuCls || !window.examEngine.matchesClassLevel(assignedClasses.join(', '), stuCls)) return false;
         }
       }
       if (subjFilter !== 'ALL' && !window.examEngine.matchesSubject(row.subject, subjFilter)) return false;
-      if (classFilter !== 'ALL' && String(row.class || '').trim().toUpperCase() !== String(classFilter).trim().toUpperCase()) return false;
+      if (classFilter !== 'ALL' && !window.examEngine.matchesClassLevel(classFilter, row.class || '')) return false;
       return true;
     });
 

@@ -180,6 +180,29 @@ class ExamEngine {
     return a === b || a.includes(b) || b.includes(a);
   }
 
+  normalizeClassToken(rawToken) {
+    let s = String(rawToken || '').trim().toUpperCase();
+    s = s.replace(/^KELAS\s+/i, '').replace(/[\s\-_]+/g, '');
+    if (!s) return '';
+    const romanPrefixes = [
+      ['XII', '12'],
+      ['XI', '11'],
+      ['VIII', '8'],
+      ['VII', '7'],
+      ['VI', '6'],
+      ['IX', '9'],
+      ['IV', '4'],
+      ['X', '10']
+    ];
+    for (const [rom, dig] of romanPrefixes) {
+      if (s === rom || s.startsWith(rom)) {
+        s = dig + s.slice(rom.length);
+        break;
+      }
+    }
+    return s;
+  }
+
   matchesClassLevel(qClass, targetClass) {
     const qcRaw = String(qClass || '').trim().toUpperCase();
     const tcRaw = String(targetClass || '').trim().toUpperCase();
@@ -188,7 +211,7 @@ class ExamEngine {
 
     const splitTokens = (str) => str
       .split(/[,;/]+/)
-      .map(s => s.trim().replace(/^KELAS\s+/i, '').replace(/\s+/g, ''))
+      .map(s => this.normalizeClassToken(s))
       .filter(Boolean);
 
     const qTokens = splitTokens(qcRaw);

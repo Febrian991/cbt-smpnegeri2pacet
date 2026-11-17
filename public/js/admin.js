@@ -201,23 +201,27 @@ class CBTAdmin {
   parseTeacherClasses(classesStr) {
     const raw = String(classesStr || "").trim().toUpperCase();
     if (!raw || raw === "SEMUA" || raw === "SEMUA KELAS" || raw === "ALL") return [];
+    const norm = (tok) => (window.examEngine && typeof window.examEngine.normalizeClassToken === 'function')
+      ? window.examEngine.normalizeClassToken(tok)
+      : String(tok || '').trim().replace(/^KELAS\s+/i, '').replace(/[\s\-_]+/g, '');
     const result = [];
     raw.split(/[,;/]+/).forEach(token => {
       const part = token.trim().replace(/^KELAS\s+/i, '');
       if (!part) return;
-      const mShort = part.match(/^(\d+)\s*([A-Z])\s*-\s*(?:\d+\s*)?([A-Z])$/);
-      if (mShort) {
-        const grade = mShort[1];
-        const startCode = mShort[2].charCodeAt(0);
-        const endCode = mShort[3].charCodeAt(0);
-        if (startCode <= endCode && endCode - startCode <= 10) {
+      const mRange = part.match(/^([0-9IVX]+)\s*[- ]*\s*([A-Z])\s*(?:S\/D|SD|-|TO)\s*(?:[0-9IVX]+\s*[- ]*\s*)?([A-Z])$/i);
+      if (mRange) {
+        const grade = norm(mRange[1]).match(/^\d+/) ? norm(mRange[1]) : mRange[1];
+        const startCode = mRange[2].toUpperCase().charCodeAt(0);
+        const endCode = mRange[3].toUpperCase().charCodeAt(0);
+        if (startCode <= endCode && endCode - startCode <= 12) {
           for (let c = startCode; c <= endCode; c++) {
             result.push(grade + String.fromCharCode(c));
           }
           return;
         }
       }
-      result.push(part.replace(/\s+/g, ''));
+      const cleaned = norm(part);
+      if (cleaned) result.push(cleaned);
     });
     return [...new Set(result)];
   }
@@ -743,12 +747,16 @@ class CBTAdmin {
     }
 
     const teacherClasses = (!isSuperAdmin && cur && cur.classes) ? this.parseTeacherClasses(cur.classes) : [];
+    const matchesCls = (a, b) => (window.examEngine && typeof window.examEngine.matchesClassLevel === 'function')
+      ? window.examEngine.matchesClassLevel(a, b)
+      : String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
+
     if (cf && cf !== 'ALL') {
-      filtered = filtered.filter(r => r.student?.class && String(r.student.class).trim().toUpperCase() === String(cf).trim().toUpperCase());
+      filtered = filtered.filter(r => r.student?.class && matchesCls(cf, r.student.class));
     } else if (teacherClasses.length > 0) {
       filtered = filtered.filter(r => {
-        const stuClass = String(r.student?.class || '').trim().toUpperCase();
-        return teacherClasses.some(tc => stuClass === tc || stuClass.startsWith(tc));
+        const stuClass = String(r.student?.class || '').trim();
+        return stuClass && matchesCls(teacherClasses.join(', '), stuClass);
       });
     }
 
