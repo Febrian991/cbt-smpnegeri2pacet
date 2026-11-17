@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
       window.cbtAdmin.saveSchedules(stateMap.cbt_exam_schedules, true);
       changed = true;
     }
-    if (Array.isArray(stateMap.cbt_questions) && stateMap.cbt_questions.length > 0 && window.examEngine) {
+    if (Array.isArray(stateMap.cbt_questions) && (stateMap.cbt_questions.length > 0 || stateMap.cbt_questions_migrated === true) && window.examEngine) {
       if (typeof window.examEngine.applyRemoteQuestions === 'function') {
         window.examEngine.applyRemoteQuestions(stateMap.cbt_questions);
       } else {
@@ -169,8 +169,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let questionsCloudSyncPromise = null;
   let realtimeQuestionRefreshTimer = null;
+  let realtimeQuestionPollTick = 0;
 
-  async function syncQuestionsFromCloud(reRenderIfOpen = true) {
+  function getQuestionsListSignature(list) {
+    if (!Array.isArray(list)) return '[]';
+    return JSON.stringify(list.map(q => [q && q.id, q && q.updatedAt || '', q && q.subject || '', q && q.question || '']));
+  }
+
+  async function syncQuestionsFromCloud(reRenderIfOpen = true, forceRender = false) {
     if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured() || !window.examEngine) return false;
     if (questionsCloudSyncPromise) return questionsCloudSyncPromise;
 
@@ -178,29 +184,40 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         await window.supabaseSync.flushPendingQuestionOps();
         const qRes = await window.supabaseSync.fetchAllQuestionRows();
-        if (qRes && qRes.success && Array.isArray(qRes.rows) && qRes.rows.length > 0) {
-          if (typeof window.examEngine.applyRemoteQuestions === 'function') {
-            window.examEngine.applyRemoteQuestions(qRes.rows);
-          } else {
-            window.examEngine.saveQuestions(qRes.rows, true);
-          }
-          if (reRenderIfOpen && viewAdmin && !viewAdmin.classList.contains('hidden')) {
-            const tabQ = document.getElementById('tabQuestions');
-            if (tabQ && !tabQ.classList.contains('hidden')) {
-              const prevSub = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
-              const prevCls = document.getElementById('filterQuestionsClass')?.value || 'ALL';
-              setupQuestionBankFilters();
-              const subEl = document.getElementById('filterQuestionsSubject');
-              const clsEl = document.getElementById('filterQuestionsClass');
-              if (subEl && Array.from(subEl.options).some(o => o.value === prevSub)) subEl.value = prevSub;
-              if (clsEl && Array.from(clsEl.options).some(o => o.value === prevCls)) clsEl.value = prevCls;
-              renderAdminQuestionList();
+        if (qRes && qRes.success && Array.isArray(qRes.rows)) {
+          const canApply = qRes.rows.length > 0 || (
+            typeof window.supabaseSync.isQuestionsMigrationCompleted === 'function' &&
+            await window.supabaseSync.isQuestionsMigrationCompleted()
+          );
+
+          if (canApply) {
+            const prevSig = getQuestionsListSignature(window.examEngine.questions);
+            if (typeof window.examEngine.applyRemoteQuestions === 'function') {
+              window.examEngine.applyRemoteQuestions(qRes.rows);
             } else {
-              renderAdminTeacherQuestionProgress();
+              window.examEngine.saveQuestions(qRes.rows, true);
             }
-            renderAdminSchedulesList();
+            const nextSig = getQuestionsListSignature(window.examEngine.questions);
+            const hasChanged = prevSig !== nextSig;
+
+            if (reRenderIfOpen && (hasChanged || forceRender) && viewAdmin && !viewAdmin.classList.contains('hidden')) {
+              const tabQ = document.getElementById('tabQuestions');
+              if (tabQ && !tabQ.classList.contains('hidden')) {
+                const prevSub = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+                const prevCls = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+                setupQuestionBankFilters();
+                const subEl = document.getElementById('filterQuestionsSubject');
+                const clsEl = document.getElementById('filterQuestionsClass');
+                if (subEl && Array.from(subEl.options).some(o => o.value === prevSub)) subEl.value = prevSub;
+                if (clsEl && Array.from(clsEl.options).some(o => o.value === prevCls)) clsEl.value = prevCls;
+                renderAdminQuestionList();
+              } else {
+                renderAdminTeacherQuestionProgress();
+              }
+              renderAdminSchedulesList();
+            }
+            return true;
           }
-          return true;
         }
       } catch (e) {
         console.warn('Gagal sinkron soal per-baris:', e);
@@ -1093,6 +1110,14 @@ document.addEventListener('DOMContentLoaded', () => {
           localStorage.removeItem('cbt_remember_student_nisn');
         }
       } catch (err) {}
+
+      if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+        // Pastikan bank soal terbaru ditarik dari Cloud sebelum siswa masuk ruang ujian (batas tunggu aman 3,5 detik)
+        await Promise.race([
+          syncQuestionsFromCloud(false),
+          new Promise(resolve => setTimeout(resolve, 3500))
+        ]);
+      }
 
       if (window.supabaseSync) {
         const qCount = window.examEngine.getQuestionsForExam(targetExamConfig.subject, authenticatedStudent.class || targetExamConfig.targetClass).questions.length;
@@ -3484,7 +3509,9 @@ document.addEventListener('DOMContentLoaded', () => {
       classFilterEl.onchange = () => renderAdminQuestionList();
     }
 
-    if (modalSubjEl) {
+    const isQuestionModalOpen = Boolean(modalQuestionForm && !modalQuestionForm.classList.contains('hidden'));
+
+    if (modalSubjEl && !isQuestionModalOpen) {
       const prevModalVal = modalSubjEl.value;
       modalSubjEl.innerHTML = '';
 
@@ -3517,7 +3544,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    if (modalClassEl) {
+    if (modalClassEl && !isQuestionModalOpen) {
       const prevModalCls = modalClassEl.value;
       modalClassEl.innerHTML = '';
 
@@ -5263,7 +5290,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const origText = btnRefreshQuestionsCloud.innerHTML;
       btnRefreshQuestionsCloud.disabled = true;
       btnRefreshQuestionsCloud.innerText = '⏳ Menyegarkan...';
-      await syncQuestionsFromCloud(true);
+      await syncQuestionsFromCloud(true, true);
       btnRefreshQuestionsCloud.disabled = false;
       btnRefreshQuestionsCloud.innerHTML = origText;
     });
@@ -6274,6 +6301,46 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const isDevWorkspacePreview = typeof window !== 'undefined' && (
+    window.location.hostname.includes('ais-dev-') ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  );
+  const setupZipDownloadBtn = (btnId, endpoint, filename) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (!isDevWorkspacePreview) {
+      btn.classList.add('hidden');
+      return;
+    }
+    btn.classList.remove('hidden');
+    btn.addEventListener('click', async () => {
+      const orig = btn.innerText;
+      btn.disabled = true;
+      btn.innerText = '⏳ Menyiapkan ZIP...';
+      try {
+        const res = await fetch(endpoint, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+      } catch (err) {
+        alert('Gagal mengunduh ZIP: ' + (err && err.message ? err.message : err));
+      } finally {
+        btn.disabled = false;
+        btn.innerText = orig;
+      }
+    });
+  };
+  setupZipDownloadBtn('btnDownloadCodeUpdateV337', '/api/download-v337.zip', 'cbt-update-v3.37.zip');
+  setupZipDownloadBtn('btnDownloadProjectZipV337', '/api/download-project.zip', 'cbt-smpn2pacet-v3.37.zip');
+
   // ===================== DASHBOARD QUICK JUMP & CLOUD REFRESH =====================
   document.querySelectorAll('.dash-jump-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -6759,6 +6826,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     realtimeNotifActive = true;
     realtimeBaselineReady = false;
+    realtimeQuestionPollTick = 0;
     updateRealtimeNotifVisibility(true);
 
     pollRealtimeStudentEvents(true);
@@ -6777,6 +6845,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       pollRealtimeStudentEvents(false);
+
+      // Cadangan polling bank soal otomatis (setiap 12 detik di tab Bank Soal, 30 detik di tab lain) jika WebSocket Realtime belum aktif
+      realtimeQuestionPollTick += 1;
+      const tabQ = document.getElementById('tabQuestions');
+      const isQuestionsTabOpen = Boolean(tabQ && !tabQ.classList.contains('hidden'));
+      if ((isQuestionsTabOpen && realtimeQuestionPollTick % 2 === 0) || realtimeQuestionPollTick % 5 === 0) {
+        syncQuestionsFromCloud(true);
+      }
     }, 6000);
   }
 
