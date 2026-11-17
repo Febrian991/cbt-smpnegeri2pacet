@@ -63,3 +63,20 @@ CREATE TABLE IF NOT EXISTS cbt_student_sessions (
 ALTER TABLE cbt_student_sessions ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all on student sessions" ON cbt_student_sessions FOR ALL USING (true) WITH CHECK (true);
+
+-- Tabel penyimpanan soal per-baris (1 baris = 1 butir soal, agar banyak guru bisa input serentak tanpa saling menimpa)
+CREATE TABLE IF NOT EXISTS cbt_questions (
+  question_key TEXT PRIMARY KEY,
+  subject TEXT NOT NULL DEFAULT 'Umum',
+  class_level TEXT DEFAULT 'Semua Kelas',
+  created_by TEXT DEFAULT '',
+  q_type TEXT DEFAULT 'single',
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  raw_data JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cbt_questions_subject ON cbt_questions(subject);
+
+ALTER TABLE cbt_questions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow public all on questions" ON cbt_questions FOR ALL USING (true) WITH CHECK (true);

@@ -14,6 +14,11 @@ class SupabaseSyncManager {
     this.isConnected = false;
     this.stateTableMissing = false;
     this.sessionTableMissing = false;
+    this.questionTableMissing = false;
+    this.pendingQuestionsStorageKey = 'cbt_pending_question_sync';
+    this._migrationPromise = null;
+    this.inflightUpserts = new Map();
+    this.inflightDeletes = new Set();
     this.initClient();
   }
 
@@ -57,6 +62,8 @@ class SupabaseSyncManager {
     }
     this.stateTableMissing = false;
     this.sessionTableMissing = false;
+    this.questionTableMissing = false;
+    this._migrationPromise = null;
     localStorage.setItem('cbt_supabase_config', JSON.stringify(this.config));
     this.initClient();
   }
@@ -98,14 +105,15 @@ class SupabaseSyncManager {
       }
 
       const stateCheck = await testClient.from('cbt_school_state').select('count', { count: 'exact', head: true });
-      if (stateCheck.error) {
+      const qCheck = await testClient.from('cbt_questions').select('count', { count: 'exact', head: true });
+      if (stateCheck.error || qCheck.error) {
         return {
           success: true,
-          message: "Koneksi ke Supabase Cloud Berhasil! Sinkronisasi otomatis lintas perangkat aktif (mode kompatibilitas)."
+          message: "Koneksi ke Supabase Cloud Berhasil! Sinkronisasi otomatis lintas perangkat & penyimpanan soal per-baris aktif (mode kompatibilitas)."
         };
       }
 
-      return { success: true, message: "Koneksi ke Supabase Cloud Berhasil! Database online & sinkronisasi lintas perangkat siap digunakan." };
+      return { success: true, message: "Koneksi ke Supabase Cloud Berhasil! Database online, tabel soal per-baris & sinkronisasi lintas perangkat siap digunakan." };
     } catch (err) {
       return { success: false, message: "Error: " + err.message };
     }
@@ -176,22 +184,548 @@ class SupabaseSyncManager {
     }
   }
 
-  // Kirim seluruh data sekolah dari perangkat saat ini ke Cloud Supabase
+  isMissingQuestionsTableError(error) {
+    if (!error) return false;
+    const msg = String(error.message || '').toLowerCase();
+    return (
+      error.code === '42P01' ||
+      error.code === 'PGRST205' ||
+      (msg.includes('cbt_questions') && (msg.includes('does not exist') || msg.includes('not find the table') || msg.includes('schema cache')))
+    );
+  }
+
+  // ================= ANTIAN OFFLINE & PENYIMPANAN SOAL PER-BARIS =================
+  loadPendingQuestionOps() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.pendingQuestionsStorageKey) || '{}');
+      return {
+        upserts: raw && typeof raw.upserts === 'object' && raw.upserts ? raw.upserts : {},
+        deletes: raw && typeof raw.deletes === 'object' && raw.deletes ? raw.deletes : {}
+      };
+    } catch (e) {
+      return { upserts: {}, deletes: {} };
+    }
+  }
+
+  savePendingQuestionOps(ops) {
+    try {
+      const upCount = Object.keys(ops.upserts || {}).length;
+      const delCount = Object.keys(ops.deletes || {}).length;
+      if (upCount === 0 && delCount === 0) {
+        localStorage.removeItem(this.pendingQuestionsStorageKey);
+      } else {
+        localStorage.setItem(this.pendingQuestionsStorageKey, JSON.stringify(ops));
+      }
+    } catch (e) {}
+  }
+
+  markQuestionsPendingUpsert(questionsArray) {
+    const ops = this.loadPendingQuestionOps();
+    (questionsArray || []).forEach(q => {
+      if (!q || q.id === undefined || q.id === null) return;
+      const k = String(q.id);
+      ops.upserts[k] = q;
+      delete ops.deletes[k];
+    });
+    this.savePendingQuestionOps(ops);
+  }
+
+  markQuestionPendingDelete(questionId) {
+    if (questionId === undefined || questionId === null) return;
+    const k = String(questionId);
+    const ops = this.loadPendingQuestionOps();
+    delete ops.upserts[k];
+    ops.deletes[k] = true;
+    this.savePendingQuestionOps(ops);
+  }
+
+  clearQuestionsPendingKeys(keys, type = 'both') {
+    const ops = this.loadPendingQuestionOps();
+    (keys || []).forEach(k => {
+      const sk = String(k);
+      if (type === 'upsert' || type === 'both') delete ops.upserts[sk];
+      if (type === 'delete' || type === 'both') delete ops.deletes[sk];
+    });
+    this.savePendingQuestionOps(ops);
+  }
+
+  buildQuestionRowPayload(q) {
+    const key = String(q.id);
+    const updatedAt = q.updatedAt || new Date().toISOString();
+    const enriched = { ...q, updatedAt };
+    return {
+      question_key: key,
+      subject: String(q.subject || 'Umum').trim() || 'Umum',
+      class_level: String(q.classLevel || 'Semua Kelas').trim() || 'Semua Kelas',
+      created_by: String(q.createdBy || ''),
+      q_type: String(q.type || 'single'),
+      updated_at: updatedAt,
+      raw_data: enriched
+    };
+  }
+
+  sortQuestionsList(list) {
+    return [...(Array.isArray(list) ? list : [])].sort((a, b) => {
+      const na = Number(a && a.id);
+      const nb = Number(b && b.id);
+      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) {
+        return na - nb;
+      }
+      return String(a && a.id || '').localeCompare(String(b && b.id || ''));
+    });
+  }
+
+  mergeQuestionListsById(baseList, overlayList) {
+    const map = new Map();
+    (Array.isArray(baseList) ? baseList : []).forEach(q => {
+      if (q && q.id !== undefined && q.id !== null) {
+        map.set(String(q.id), q);
+      }
+    });
+    (Array.isArray(overlayList) ? overlayList : []).forEach(q => {
+      if (!q || q.id === undefined || q.id === null) return;
+      const key = String(q.id);
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, q);
+      } else {
+        const prevTs = String(prev.updatedAt || '');
+        const nextTs = String(q.updatedAt || '');
+        if (!prevTs || (nextTs && nextTs >= prevTs)) {
+          map.set(key, q);
+        }
+      }
+    });
+    return this.sortQuestionsList(Array.from(map.values()));
+  }
+
+  applyPendingQuestionOverlay(remoteQuestions) {
+    const ops = this.loadPendingQuestionOps();
+    const deleteSet = new Set([
+      ...Object.keys(ops.deletes || {}),
+      ...Array.from(this.inflightDeletes || [])
+    ]);
+
+    const baseFiltered = (Array.isArray(remoteQuestions) ? remoteQuestions : [])
+      .filter(q => q && q.id !== undefined && q.id !== null && !deleteSet.has(String(q.id)));
+
+    const overlayList = [
+      ...Object.values(ops.upserts || {}),
+      ...Array.from((this.inflightUpserts && this.inflightUpserts.values()) || [])
+    ];
+
+    return this.mergeQuestionListsById(baseFiltered, overlayList);
+  }
+
+  async hasAnyPerRowQuestionsRemote() {
+    if (!this.client || !this.isConnected) return false;
+    try {
+      if (!this.questionTableMissing) {
+        const { data, error } = await this.client
+          .from('cbt_questions')
+          .select('question_key')
+          .limit(1);
+
+        if (!error) {
+          if (Array.isArray(data) && data.length > 0) return true;
+        } else if (this.isMissingQuestionsTableError(error)) {
+          this.questionTableMissing = true;
+        }
+      }
+
+      const { data: fbData, error: fbErr } = await this.client
+        .from('cbt_exam_results')
+        .select('id')
+        .eq('student_nisn', '__CBT_QUESTION_ROW__')
+        .limit(1);
+
+      return !fbErr && Array.isArray(fbData) && fbData.length > 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async ensureQuestionsMigratedToRows(fallbackLocalQuestions = []) {
+    if (!this.client || !this.isConnected) return false;
+    if (this._migrationPromise) return this._migrationPromise;
+
+    this._migrationPromise = (async () => {
+      try {
+        const alreadySeeded = await this.hasAnyPerRowQuestionsRemote();
+        if (alreadySeeded) return true;
+
+        let legacyQuestions = [];
+        if (!this.stateTableMissing) {
+          const { data, error } = await this.client
+            .from('cbt_school_state')
+            .select('value')
+            .eq('key', 'cbt_questions')
+            .limit(1);
+          if (!error && Array.isArray(data) && data[0] && Array.isArray(data[0].value)) {
+            legacyQuestions = data[0].value;
+          } else if (this.isMissingTableError(error)) {
+            this.stateTableMissing = true;
+          }
+        }
+
+        if (legacyQuestions.length === 0) {
+          const { data: fbState } = await this.client
+            .from('cbt_exam_results')
+            .select('raw_data, id')
+            .eq('student_nisn', '__CBT_STATE__')
+            .eq('student_name', 'cbt_questions')
+            .order('id', { ascending: false })
+            .limit(1);
+          if (Array.isArray(fbState) && fbState[0] && Array.isArray(fbState[0].raw_data)) {
+            legacyQuestions = fbState[0].raw_data;
+          }
+        }
+
+        const seedList = legacyQuestions.length > 0
+          ? legacyQuestions
+          : (Array.isArray(fallbackLocalQuestions) ? fallbackLocalQuestions : []);
+
+        if (seedList.length > 0) {
+          await this.upsertQuestionRows(seedList, { skipMigrationCheck: true });
+        }
+        return true;
+      } catch (e) {
+        return false;
+      } finally {
+        this._migrationPromise = null;
+      }
+    })();
+
+    return this._migrationPromise;
+  }
+
+  async upsertQuestionRow(questionObj, seedFallback = []) {
+    if (!questionObj || questionObj.id === undefined || questionObj.id === null) {
+      return { success: false, message: 'ID soal tidak valid.' };
+    }
+    return this.upsertQuestionRows([questionObj], { seedFallback });
+  }
+
+  async upsertQuestionRows(questionsArray, options = {}) {
+    const validList = (Array.isArray(questionsArray) ? questionsArray : [])
+      .filter(q => q && q.id !== undefined && q.id !== null);
+
+    if (validList.length === 0) return { success: true, count: 0 };
+
+    if (!this.client || !this.isConnected) {
+      this.markQuestionsPendingUpsert(validList);
+      return { success: false, queued: true, count: 0 };
+    }
+
+    const trackedKeys = [];
+    if (!options.skipInflightTrack) {
+      validList.forEach(q => {
+        const k = String(q.id);
+        trackedKeys.push(k);
+        this.inflightDeletes.delete(k);
+        this.inflightUpserts.set(k, q);
+      });
+    }
+
+    try {
+      if (!options.skipMigrationCheck) {
+        await this.ensureQuestionsMigratedToRows(options.seedFallback || []);
+      }
+
+      const CHUNK_SIZE = 50;
+      let syncedCount = 0;
+
+      for (let i = 0; i < validList.length; i += CHUNK_SIZE) {
+        const chunk = validList.slice(i, i + CHUNK_SIZE);
+        const payloads = chunk.map(q => this.buildQuestionRowPayload(q));
+        const chunkKeys = payloads.map(p => p.question_key);
+        let chunkSaved = false;
+
+        if (!this.questionTableMissing) {
+          const { error } = await this.client
+            .from('cbt_questions')
+            .upsert(payloads, { onConflict: 'question_key' });
+
+          if (!error) {
+            chunkSaved = true;
+          } else if (this.isMissingQuestionsTableError(error)) {
+            this.questionTableMissing = true;
+          } else {
+            console.warn('Gagal upsert cbt_questions:', error.message);
+          }
+        }
+
+        if (!chunkSaved) {
+          await this.client
+            .from('cbt_exam_results')
+            .delete()
+            .eq('student_nisn', '__CBT_QUESTION_ROW__')
+            .in('exam_title', chunkKeys);
+
+          const fbRows = payloads.map(p => ({
+            student_name: p.created_by || 'Guru',
+            student_nisn: '__CBT_QUESTION_ROW__',
+            student_class: p.class_level,
+            exam_title: p.question_key,
+            subject: p.subject,
+            final_score: 0,
+            correct_count: 0,
+            incorrect_count: 0,
+            unattempted_count: 0,
+            total_questions: 1,
+            cheat_count: 0,
+            completed_at: p.updated_at,
+            finish_reason: p.q_type,
+            raw_data: p.raw_data
+          }));
+
+          const { error: fbErr } = await this.client
+            .from('cbt_exam_results')
+            .insert(fbRows);
+
+          if (fbErr) {
+            this.markQuestionsPendingUpsert(validList.slice(i));
+            return { success: false, message: fbErr.message, count: syncedCount };
+          }
+          chunkSaved = true;
+        }
+
+        if (chunkSaved) {
+          this.clearQuestionsPendingKeys(chunkKeys, 'upsert');
+          syncedCount += chunk.length;
+        }
+      }
+
+      return { success: true, count: syncedCount };
+    } catch (err) {
+      this.markQuestionsPendingUpsert(validList);
+      return { success: false, queued: true, message: err.message };
+    } finally {
+      trackedKeys.forEach(k => this.inflightUpserts.delete(k));
+    }
+  }
+
+  async deleteQuestionRow(questionId, seedFallback = []) {
+    if (questionId === undefined || questionId === null) return { success: false };
+    const key = String(questionId);
+
+    if (!this.client || !this.isConnected) {
+      this.markQuestionPendingDelete(key);
+      return { success: false, queued: true };
+    }
+
+    this.inflightUpserts.delete(key);
+    this.inflightDeletes.add(key);
+
+    try {
+      await this.ensureQuestionsMigratedToRows(seedFallback);
+
+      let deletedOk = false;
+      if (!this.questionTableMissing) {
+        const { error } = await this.client
+          .from('cbt_questions')
+          .delete()
+          .eq('question_key', key);
+
+        if (!error) {
+          deletedOk = true;
+        } else if (this.isMissingQuestionsTableError(error)) {
+          this.questionTableMissing = true;
+        } else {
+          console.warn(`Gagal hapus cbt_questions[${key}]:`, error.message);
+        }
+      }
+
+      const { error: fbErr } = await this.client
+        .from('cbt_exam_results')
+        .delete()
+        .eq('student_nisn', '__CBT_QUESTION_ROW__')
+        .eq('exam_title', key);
+
+      if (deletedOk || !fbErr) {
+        this.clearQuestionsPendingKeys([key], 'both');
+        return { success: true };
+      }
+
+      this.markQuestionPendingDelete(key);
+      return { success: false, message: fbErr ? fbErr.message : 'Gagal menghapus soal di cloud.' };
+    } catch (err) {
+      this.markQuestionPendingDelete(key);
+      return { success: false, queued: true, message: err.message };
+    } finally {
+      this.inflightDeletes.delete(key);
+    }
+  }
+
+  async replaceAllQuestionRows(questionsArray) {
+    const validList = (Array.isArray(questionsArray) ? questionsArray : [])
+      .filter(q => q && q.id !== undefined && q.id !== null);
+
+    this.savePendingQuestionOps({ upserts: {}, deletes: {} });
+
+    if (!this.client || !this.isConnected) {
+      this.markQuestionsPendingUpsert(validList);
+      return { success: false, queued: true };
+    }
+
+    try {
+      if (!this.questionTableMissing) {
+        const { error } = await this.client
+          .from('cbt_questions')
+          .delete()
+          .neq('question_key', '__NEVER_MATCH__');
+        if (error && this.isMissingQuestionsTableError(error)) {
+          this.questionTableMissing = true;
+        }
+      }
+
+      await this.client
+        .from('cbt_exam_results')
+        .delete()
+        .eq('student_nisn', '__CBT_QUESTION_ROW__');
+
+      const res = await this.upsertQuestionRows(validList, { skipMigrationCheck: true });
+      await this.pushStateKey('cbt_questions', validList);
+      return res;
+    } catch (err) {
+      return { success: false, message: err.message };
+    }
+  }
+
+  async flushPendingQuestionOps() {
+    if (!this.client || !this.isConnected) return false;
+    const ops = this.loadPendingQuestionOps();
+    const pendingUpserts = Object.values(ops.upserts || {});
+    const pendingDeletes = Object.keys(ops.deletes || {});
+
+    if (pendingUpserts.length === 0 && pendingDeletes.length === 0) return true;
+
+    if (pendingUpserts.length > 0) {
+      await this.upsertQuestionRows(pendingUpserts);
+    }
+    for (const delKey of pendingDeletes) {
+      await this.deleteQuestionRow(delKey);
+    }
+    return true;
+  }
+
+  async fetchAllQuestionRows() {
+    if (!this.client || !this.isConnected) {
+      return { success: false, rows: [] };
+    }
+
+    const rowMap = new Map();
+    const putRow = (qObj, updatedAtFallback = '') => {
+      if (!qObj || typeof qObj !== 'object' || qObj.id === undefined || qObj.id === null) return;
+      const k = String(qObj.id);
+      const prev = rowMap.get(k);
+      const nextTs = String(qObj.updatedAt || updatedAtFallback || '');
+      const prevTs = prev ? String(prev.updatedAt || '') : '';
+      if (!prev || (!prevTs && nextTs) || (nextTs && nextTs >= prevTs)) {
+        rowMap.set(k, updatedAtFallback && !qObj.updatedAt ? { ...qObj, updatedAt: updatedAtFallback } : qObj);
+      }
+    };
+
+    try {
+      if (!this.questionTableMissing) {
+        let from = 0;
+        const PAGE = 1000;
+        let primaryOk = true;
+
+        while (true) {
+          const { data, error } = await this.client
+            .from('cbt_questions')
+            .select('question_key, updated_at, raw_data')
+            .range(from, from + PAGE - 1);
+
+          if (error) {
+            if (this.isMissingQuestionsTableError(error)) {
+              this.questionTableMissing = true;
+            }
+            primaryOk = false;
+            break;
+          }
+
+          if (Array.isArray(data)) {
+            data.forEach(r => {
+              if (r && r.raw_data && typeof r.raw_data === 'object') {
+                putRow(r.raw_data, r.updated_at || '');
+              }
+            });
+          }
+          if (!Array.isArray(data) || data.length < PAGE) break;
+          from += PAGE;
+        }
+
+        if (primaryOk && rowMap.size > 0) {
+          return { success: true, rows: this.sortQuestionsList(Array.from(rowMap.values())), source: 'cbt_questions' };
+        }
+      }
+
+      // Fallback atau cek data cadangan per-baris di cbt_exam_results
+      let fbFrom = 0;
+      const FB_PAGE = 1000;
+      while (true) {
+        const { data: fbData, error: fbErr } = await this.client
+          .from('cbt_exam_results')
+          .select('exam_title, completed_at, raw_data, id')
+          .eq('student_nisn', '__CBT_QUESTION_ROW__')
+          .order('id', { ascending: false })
+          .range(fbFrom, fbFrom + FB_PAGE - 1);
+
+        if (fbErr || !Array.isArray(fbData)) break;
+        fbData.forEach(r => {
+          if (r && r.raw_data && typeof r.raw_data === 'object') {
+            putRow(r.raw_data, r.completed_at || '');
+          }
+        });
+        if (fbData.length < FB_PAGE) break;
+        fbFrom += FB_PAGE;
+      }
+
+      return {
+        success: true,
+        rows: this.sortQuestionsList(Array.from(rowMap.values())),
+        source: this.questionTableMissing ? 'fallback_rows' : 'cbt_questions'
+      };
+    } catch (err) {
+      console.warn('Gagal fetchAllQuestionRows:', err);
+      return { success: false, rows: [] };
+    }
+  }
+
+  // Kirim seluruh data sekolah dari perangkat saat ini ke Cloud Supabase (menggabungkan bank soal agar tidak menimpa guru lain)
   async pushAllSchoolState() {
     if (!this.client || !this.isConnected) {
       return { success: false, message: "Supabase Cloud belum terhubung." };
+    }
+
+    await this.flushPendingQuestionOps();
+
+    let mergedQuestions = window.examEngine ? [...window.examEngine.questions] : [];
+    const remoteQ = await this.fetchAllQuestionRows();
+    if (remoteQ && remoteQ.success && Array.isArray(remoteQ.rows) && remoteQ.rows.length > 0) {
+      mergedQuestions = this.mergeQuestionListsById(remoteQ.rows, mergedQuestions);
+      if (window.examEngine && mergedQuestions.length > window.examEngine.questions.length) {
+        window.examEngine.saveQuestions(mergedQuestions, true);
+      }
     }
 
     const entries = [
       ['cbt_config', window.examEngine ? window.examEngine.config : null],
       ['cbt_school_config', window.cbtAdmin ? window.cbtAdmin.getSchoolConfig() : null],
       ['cbt_exam_schedules', window.cbtAdmin ? window.cbtAdmin.schedules : null],
-      ['cbt_questions', window.examEngine ? window.examEngine.questions : null],
       ['cbt_students_list', window.studentManager ? window.studentManager.getAllStudents() : null],
       ['cbt_teachers_list', window.cbtAdmin ? window.cbtAdmin.getAllTeachers() : null]
     ].filter(([, val]) => val !== null && val !== undefined);
 
     let pushed = 0;
+    if (mergedQuestions.length > 0) {
+      const qPush = await this.upsertQuestionRows(mergedQuestions, { skipMigrationCheck: true });
+      await this.pushStateKey('cbt_questions', mergedQuestions);
+      if (qPush && qPush.success) pushed++;
+    }
+
     for (const [k, v] of entries) {
       const res = await this.pushStateKey(k, v);
       if (res && res.success) pushed++;
@@ -208,6 +742,8 @@ class SupabaseSyncManager {
     const stateMap = {};
 
     try {
+      await this.flushPendingQuestionOps();
+
       if (!this.stateTableMissing) {
         const { data, error } = await this.client
           .from('cbt_school_state')
@@ -219,28 +755,36 @@ class SupabaseSyncManager {
               stateMap[row.key] = row.value;
             }
           });
-          if (Object.keys(stateMap).length > 0) {
-            return { success: true, state: stateMap };
-          }
         } else if (this.isMissingTableError(error)) {
           this.stateTableMissing = true;
         }
       }
 
-      // Fallback otomatis dari tabel cbt_exam_results
-      const { data: fbData, error: fbError } = await this.client
-        .from('cbt_exam_results')
-        .select('student_name, raw_data, id')
-        .eq('student_nisn', '__CBT_STATE__')
-        .neq('exam_title', '__CBT_LIVE_SESSION__')
-        .order('id', { ascending: false });
+      if (Object.keys(stateMap).length === 0) {
+        // Fallback otomatis dari tabel cbt_exam_results
+        const { data: fbData, error: fbError } = await this.client
+          .from('cbt_exam_results')
+          .select('student_name, raw_data, id')
+          .eq('student_nisn', '__CBT_STATE__')
+          .neq('exam_title', '__CBT_LIVE_SESSION__')
+          .order('id', { ascending: false });
 
-      if (!fbError && Array.isArray(fbData)) {
-        fbData.forEach(row => {
-          if (row && row.student_name && row.raw_data !== undefined && stateMap[row.student_name] === undefined) {
-            stateMap[row.student_name] = row.raw_data;
-          }
-        });
+        if (!fbError && Array.isArray(fbData)) {
+          fbData.forEach(row => {
+            if (row && row.student_name && row.raw_data !== undefined && stateMap[row.student_name] === undefined) {
+              stateMap[row.student_name] = row.raw_data;
+            }
+          });
+        }
+      }
+
+      // Ambil soal per-baris dari cbt_questions (atau fallback __CBT_QUESTION_ROW__)
+      const qRes = await this.fetchAllQuestionRows();
+      if (qRes && qRes.success && Array.isArray(qRes.rows) && qRes.rows.length > 0) {
+        stateMap.cbt_questions = qRes.rows;
+      } else if (Array.isArray(stateMap.cbt_questions) && stateMap.cbt_questions.length > 0) {
+        // Auto-migrasi dari penyimpanan lama 1-JSON ke per-baris
+        await this.upsertQuestionRows(stateMap.cbt_questions, { skipMigrationCheck: true });
       }
 
       return { success: true, state: stateMap };
@@ -490,7 +1034,7 @@ class SupabaseSyncManager {
 
       if (error || !Array.isArray(data)) return [];
       return data
-        .filter(row => row.student_nisn !== '__CBT_STATE__' && row.exam_title !== '__CBT_LIVE_SESSION__')
+        .filter(row => row.student_nisn !== '__CBT_STATE__' && row.student_nisn !== '__CBT_QUESTION_ROW__' && row.exam_title !== '__CBT_LIVE_SESSION__')
         .map(row => row.raw_data ? row.raw_data : {
           id: row.id,
           student: { name: row.student_name, nisn: row.student_nisn, class: row.student_class },
@@ -562,6 +1106,7 @@ class SupabaseSyncManager {
         .from('cbt_exam_results')
         .select('*')
         .neq('student_nisn', '__CBT_STATE__')
+        .neq('student_nisn', '__CBT_QUESTION_ROW__')
         .neq('exam_title', '__CBT_LIVE_SESSION__')
         .order('final_score', { ascending: false });
 
@@ -570,7 +1115,7 @@ class SupabaseSyncManager {
       }
 
       const formatted = (data || [])
-        .filter(row => row.student_nisn !== '__CBT_STATE__' && row.exam_title !== '__CBT_LIVE_SESSION__')
+        .filter(row => row.student_nisn !== '__CBT_STATE__' && row.student_nisn !== '__CBT_QUESTION_ROW__' && row.exam_title !== '__CBT_LIVE_SESSION__')
         .map(row => {
           if (row.raw_data) return row.raw_data;
           return {
@@ -601,8 +1146,8 @@ class SupabaseSyncManager {
     }
   }
 
-  // Subscribe ke Supabase Realtime (postgres_changes) untuk notifikasi instan pelanggaran & selesai ujian
-  subscribeToRealtimeNotifications(onSessionEvent, onResultEvent) {
+  // Subscribe ke Supabase Realtime (postgres_changes) untuk notifikasi instan pelanggaran, selesai ujian & perubahan soal per-baris
+  subscribeToRealtimeNotifications(onSessionEvent, onResultEvent, onQuestionEvent) {
     this.unsubscribeRealtimeNotifications();
     if (!this.client || !this.isConnected || typeof this.client.channel !== 'function') {
       return null;
@@ -639,10 +1184,26 @@ class SupabaseSyncManager {
         )
         .on(
           'postgres_changes',
+          { event: '*', schema: 'public', table: 'cbt_questions' },
+          (payload) => {
+            if (typeof onQuestionEvent === 'function') {
+              onQuestionEvent(payload);
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'cbt_exam_results' },
           (payload) => {
             const row = payload && payload.new;
             if (!row || row.student_nisn === '__CBT_STATE__') return;
+
+            if (row.student_nisn === '__CBT_QUESTION_ROW__') {
+              if (typeof onQuestionEvent === 'function') {
+                onQuestionEvent(payload);
+              }
+              return;
+            }
 
             if (row.exam_title === '__CBT_LIVE_SESSION__') {
               const sessionObj = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {

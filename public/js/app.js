@@ -125,7 +125,11 @@ document.addEventListener('DOMContentLoaded', () => {
       changed = true;
     }
     if (Array.isArray(stateMap.cbt_questions) && stateMap.cbt_questions.length > 0 && window.examEngine) {
-      window.examEngine.saveQuestions(stateMap.cbt_questions, true);
+      if (typeof window.examEngine.applyRemoteQuestions === 'function') {
+        window.examEngine.applyRemoteQuestions(stateMap.cbt_questions);
+      } else {
+        window.examEngine.saveQuestions(stateMap.cbt_questions, true);
+      }
       changed = true;
     }
     if (stateMap.cbt_config && typeof stateMap.cbt_config === 'object' && window.examEngine) {
@@ -163,9 +167,67 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  let questionsCloudSyncPromise = null;
+  let realtimeQuestionRefreshTimer = null;
+
+  async function syncQuestionsFromCloud(reRenderIfOpen = true) {
+    if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured() || !window.examEngine) return false;
+    if (questionsCloudSyncPromise) return questionsCloudSyncPromise;
+
+    questionsCloudSyncPromise = (async () => {
+      try {
+        await window.supabaseSync.flushPendingQuestionOps();
+        const qRes = await window.supabaseSync.fetchAllQuestionRows();
+        if (qRes && qRes.success && Array.isArray(qRes.rows) && qRes.rows.length > 0) {
+          if (typeof window.examEngine.applyRemoteQuestions === 'function') {
+            window.examEngine.applyRemoteQuestions(qRes.rows);
+          } else {
+            window.examEngine.saveQuestions(qRes.rows, true);
+          }
+          if (reRenderIfOpen && viewAdmin && !viewAdmin.classList.contains('hidden')) {
+            const tabQ = document.getElementById('tabQuestions');
+            if (tabQ && !tabQ.classList.contains('hidden')) {
+              const prevSub = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+              const prevCls = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+              setupQuestionBankFilters();
+              const subEl = document.getElementById('filterQuestionsSubject');
+              const clsEl = document.getElementById('filterQuestionsClass');
+              if (subEl && Array.from(subEl.options).some(o => o.value === prevSub)) subEl.value = prevSub;
+              if (clsEl && Array.from(clsEl.options).some(o => o.value === prevCls)) clsEl.value = prevCls;
+              renderAdminQuestionList();
+            } else {
+              renderAdminTeacherQuestionProgress();
+            }
+            renderAdminSchedulesList();
+          }
+          return true;
+        }
+      } catch (e) {
+        console.warn('Gagal sinkron soal per-baris:', e);
+      }
+      return false;
+    })();
+
+    try {
+      return await questionsCloudSyncPromise;
+    } finally {
+      questionsCloudSyncPromise = null;
+    }
+  }
+
+  function scheduleRealtimeQuestionRefresh() {
+    if (realtimeQuestionRefreshTimer) clearTimeout(realtimeQuestionRefreshTimer);
+    realtimeQuestionRefreshTimer = setTimeout(() => {
+      realtimeQuestionRefreshTimer = null;
+      syncQuestionsFromCloud(true);
+    }, 650);
+  }
+
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && viewLogin && !viewLogin.classList.contains('hidden')) {
       syncFromCloud(true);
+    } else if (!document.hidden && viewAdmin && !viewAdmin.classList.contains('hidden')) {
+      syncQuestionsFromCloud(true);
     }
   });
 
@@ -812,6 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
       viewAdmin.classList.remove('hidden');
       renderAdminDashboard();
       startAdminRealtimeNotifications();
+      syncQuestionsFromCloud(true);
     }
 
     updateCloudBadge();
@@ -1699,6 +1762,7 @@ document.addEventListener('DOMContentLoaded', () => {
             tpPanel.classList.add('hidden');
           }
         }
+        syncQuestionsFromCloud(true);
       } else if (targetTab === 'tabStudents' && isAdmin) {
         renderAdminStudentsList(document.getElementById('searchStudentInput')?.value || '');
       } else if (targetTab === 'tabTeachers' && isAdmin) {
@@ -5189,6 +5253,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const btnRefreshQuestionsCloud = document.getElementById('btnRefreshQuestionsCloud');
+  if (btnRefreshQuestionsCloud) {
+    btnRefreshQuestionsCloud.addEventListener('click', async () => {
+      if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) {
+        alert("Supabase Cloud belum aktif.");
+        return;
+      }
+      const origText = btnRefreshQuestionsCloud.innerHTML;
+      btnRefreshQuestionsCloud.disabled = true;
+      btnRefreshQuestionsCloud.innerText = '⏳ Menyegarkan...';
+      await syncQuestionsFromCloud(true);
+      btnRefreshQuestionsCloud.disabled = false;
+      btnRefreshQuestionsCloud.innerHTML = origText;
+    });
+  }
+
   // ===================== TAB 3: MANAJEMEN 250 SISWA & KARTU PESERTA =====================
   function renderAdminStudentsList(searchQuery = "") {
     const tbody = document.getElementById('adminStudentsTbody');
@@ -6686,7 +6766,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.supabaseSync && window.supabaseSync.isCloudConfigured() && typeof window.supabaseSync.subscribeToRealtimeNotifications === 'function') {
       window.supabaseSync.subscribeToRealtimeNotifications(
         (sess) => processSessionDelta(sess, true),
-        (resObj) => processResultInsertDelta(resObj)
+        (resObj) => processResultInsertDelta(resObj),
+        () => scheduleRealtimeQuestionRefresh()
       );
     }
 

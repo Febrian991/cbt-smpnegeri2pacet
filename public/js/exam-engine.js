@@ -165,11 +165,37 @@ class ExamEngine {
     return [...DEFAULT_QUESTIONS];
   }
 
+  generateUniqueQuestionId(existingList = null) {
+    const list = Array.isArray(existingList)
+      ? existingList
+      : (Array.isArray(this.questions) ? this.questions : []);
+    const used = new Set(list.map(q => (q && q.id !== undefined && q.id !== null ? String(q.id) : '')));
+    let candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    while (used.has(String(candidate))) {
+      candidate += 1;
+    }
+    return candidate;
+  }
+
+  applyRemoteQuestions(remoteQuestions) {
+    if (!Array.isArray(remoteQuestions)) return this.questions;
+    let nextList = remoteQuestions;
+    if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.applyPendingQuestionOverlay === 'function') {
+      nextList = window.supabaseSync.applyPendingQuestionOverlay(remoteQuestions);
+    }
+    this.saveQuestions(nextList, true);
+    return this.questions;
+  }
+
   saveQuestions(newQuestions, skipCloudPush = false) {
     this.questions = this.normalizeQuestionsList(newQuestions);
     localStorage.setItem('cbt_questions', JSON.stringify(this.questions));
     if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
-      window.supabaseSync.pushStateKey('cbt_questions', this.questions);
+      if (typeof window.supabaseSync.upsertQuestionRows === 'function') {
+        window.supabaseSync.upsertQuestionRows(this.questions, { skipMigrationCheck: true });
+      } else {
+        window.supabaseSync.pushStateKey('cbt_questions', this.questions);
+      }
     }
   }
 

@@ -523,9 +523,12 @@ class CBTAdmin {
   }
 
   addQuestion(questionData) {
-    const questions = [...window.examEngine.questions];
-    const newId = questions.length > 0 ? Math.max(...questions.map(q => Number(q.id) || 0)) + 1 : 1;
+    const existing = [...window.examEngine.questions];
+    const newId = typeof window.examEngine.generateUniqueQuestionId === 'function'
+      ? window.examEngine.generateUniqueQuestionId(existing)
+      : (Date.now() * 1000 + Math.floor(Math.random() * 1000));
     const cur = this.getCurrentTeacher();
+    const nowIso = new Date().toISOString();
 
     let newQ = {
       id: newId,
@@ -535,7 +538,8 @@ class CBTAdmin {
       type: questionData.type || 'single',
       question: questionData.question,
       image: questionData.image || "",
-      weight: parseInt(questionData.weight) || 10
+      weight: parseInt(questionData.weight) || 10,
+      updatedAt: nowIso
     };
 
     if (newQ.type === 'single') {
@@ -548,21 +552,26 @@ class CBTAdmin {
       newQ.statements = questionData.statements;
     }
 
-    questions.push(newQ);
-    window.examEngine.saveQuestions(questions);
+    const questions = [...existing, newQ];
+    window.examEngine.saveQuestions(questions, true);
+
+    if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.upsertQuestionRow === 'function') {
+      window.supabaseSync.upsertQuestionRow(newQ, existing);
+    }
     return newQ;
   }
 
   updateQuestion(id, questionData) {
-    const questions = [...window.examEngine.questions];
-    const targetIdx = questions.findIndex(q => String(q.id) === String(id));
+    const existingList = [...window.examEngine.questions];
+    const targetIdx = existingList.findIndex(q => String(q.id) === String(id));
     if (targetIdx === -1) {
       return { success: false, message: "Butir soal tidak ditemukan di bank soal." };
     }
 
-    const existing = questions[targetIdx];
+    const existing = existingList[targetIdx];
     const cur = this.getCurrentTeacher();
     const nextType = questionData.type || existing.type || 'single';
+    const nowIso = new Date().toISOString();
 
     const updatedQ = {
       id: existing.id,
@@ -572,7 +581,8 @@ class CBTAdmin {
       type: nextType,
       question: questionData.question,
       image: questionData.image !== undefined ? questionData.image : (existing.image || ""),
-      weight: parseInt(questionData.weight, 10) || existing.weight || 10
+      weight: parseInt(questionData.weight, 10) || existing.weight || 10,
+      updatedAt: nowIso
     };
 
     if (nextType === 'single') {
@@ -587,18 +597,32 @@ class CBTAdmin {
       updatedQ.statements = questionData.statements;
     }
 
-    questions[targetIdx] = updatedQ;
-    window.examEngine.saveQuestions(questions);
+    existingList[targetIdx] = updatedQ;
+    window.examEngine.saveQuestions(existingList, true);
+
+    if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.upsertQuestionRow === 'function') {
+      window.supabaseSync.upsertQuestionRow(updatedQ, existingList);
+    }
     return { success: true, question: updatedQ };
   }
 
   deleteQuestion(id) {
-    const questions = window.examEngine.questions.filter(q => q.id !== id);
-    window.examEngine.saveQuestions(questions);
+    const prevQuestions = [...window.examEngine.questions];
+    const questions = prevQuestions.filter(q => String(q.id) !== String(id));
+    window.examEngine.saveQuestions(questions, true);
+
+    if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.deleteQuestionRow === 'function') {
+      window.supabaseSync.deleteQuestionRow(id, prevQuestions);
+    }
   }
 
   resetToDefaultQuestions() {
-    window.examEngine.saveQuestions([...DEFAULT_QUESTIONS]);
+    const defaults = [...DEFAULT_QUESTIONS];
+    window.examEngine.saveQuestions(defaults, true);
+
+    if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.replaceAllQuestionRows === 'function') {
+      window.supabaseSync.replaceAllQuestionRows(defaults);
+    }
   }
 
   exportQuestionsJSON(subjectFilter = 'ALL', classFilter = 'ALL') {
@@ -620,23 +644,34 @@ class CBTAdmin {
       const parsed = JSON.parse(jsonString);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const existing = [...window.examEngine.questions];
-        let maxId = existing.length > 0 ? Math.max(...existing.map(q => Number(q.id) || 0)) : 0;
+        const usedIds = new Set(existing.map(q => (q && q.id !== undefined && q.id !== null ? String(q.id) : '')));
+        let nextId = Date.now() * 1000 + Math.floor(Math.random() * 500);
+        const nowIso = new Date().toISOString();
         const fallbackSub = (defaultSubject && defaultSubject !== 'ALL' && defaultSubject !== 'UMUM') ? defaultSubject : 'Umum';
         const fallbackCls = (defaultClassLevel && defaultClassLevel !== 'ALL') ? defaultClassLevel : 'Semua Kelas';
 
         const cur = this.getCurrentTeacher();
         const normalized = parsed.map(item => {
-          maxId += 1;
+          while (usedIds.has(String(nextId))) {
+            nextId += 1;
+          }
+          const assignedId = nextId;
+          usedIds.add(String(assignedId));
+          nextId += 1;
           return {
             ...item,
-            id: maxId,
+            id: assignedId,
             subject: item.subject ? String(item.subject).trim() : fallbackSub,
             classLevel: item.classLevel ? String(item.classLevel).trim() : fallbackCls,
-            createdBy: item.createdBy || (cur ? cur.name : "Proktor Utama / Admin")
+            createdBy: item.createdBy || (cur ? cur.name : "Proktor Utama / Admin"),
+            updatedAt: nowIso
           };
         });
 
-        window.examEngine.saveQuestions([...existing, ...normalized]);
+        window.examEngine.saveQuestions([...existing, ...normalized], true);
+        if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.upsertQuestionRows === 'function') {
+          window.supabaseSync.upsertQuestionRows(normalized, { seedFallback: existing });
+        }
         return { success: true, count: normalized.length };
       }
       return { success: false, message: "Format file JSON tidak valid." };
@@ -1552,7 +1587,10 @@ class CBTAdmin {
         this.saveSchedules(d.cbt_exam_schedules);
       }
       if (Array.isArray(d.cbt_questions) && d.cbt_questions.length > 0 && window.examEngine) {
-        window.examEngine.saveQuestions(d.cbt_questions);
+        window.examEngine.saveQuestions(d.cbt_questions, true);
+        if (typeof window !== 'undefined' && window.supabaseSync && typeof window.supabaseSync.replaceAllQuestionRows === 'function') {
+          window.supabaseSync.replaceAllQuestionRows(d.cbt_questions);
+        }
       }
       if (d.cbt_config && typeof d.cbt_config === 'object' && window.examEngine) {
         window.examEngine.saveConfig(d.cbt_config);
