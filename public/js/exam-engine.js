@@ -235,6 +235,9 @@ class ExamEngine {
     this.lastViolationAt = null;
     this.isExamActive = false;
     this._isFinishing = false;
+    this._cheatLimitReached = false;
+    this._lastScreenshotKeyAt = 0;
+    this._lastFocusViolationAt = 0;
     this.fontScaleLevel = 1;
     this.fontScales = ['0.9rem', '1rem', '1.18rem'];
 
@@ -728,6 +731,9 @@ class ExamEngine {
 
   startExam(studentData, examOverride = null) {
     this._isFinishing = false;
+    this._cheatLimitReached = false;
+    this._lastScreenshotKeyAt = 0;
+    this._lastFocusViolationAt = 0;
     this.student = studentData;
     this.activeExamConfig = examOverride ? { ...examOverride } : (studentData && studentData.examConfig ? { ...studentData.examConfig } : null);
     this.attemptNumber = (studentData && parseInt(studentData.attemptNumber, 10)) || 1;
@@ -782,6 +788,9 @@ class ExamEngine {
 
   resumeSession(sessionData) {
     this._isFinishing = false;
+    this._cheatLimitReached = false;
+    this._lastScreenshotKeyAt = 0;
+    this._lastFocusViolationAt = 0;
     _unsealKvFromSession();
     this.student = sessionData.student;
     this.activeExamConfig = sessionData.activeExamConfig || (sessionData.student && sessionData.student.examConfig) || null;
@@ -1110,25 +1119,65 @@ class ExamEngine {
       });
     });
 
+    const isPrintScreenKey = (e) => {
+      if (!e) return false;
+      return (
+        e.key === 'PrintScreen' ||
+        e.code === 'PrintScreen' ||
+        e.key === 'Snapshot' ||
+        e.key === 'Print' ||
+        e.keyCode === 44
+      );
+    };
+
+    const triggerScreenshotOrFocusViolation = (shieldReason, violationReason, category) => {
+      if (!this.isExamActive || this._isFinishing || this._cheatLimitReached) return;
+      const now = Date.now();
+      if (category === 'keyboard') {
+        if (now - this._lastScreenshotKeyAt < 350) {
+          this.triggerPrivacyShield(shieldReason);
+          return;
+        }
+        this._lastScreenshotKeyAt = now;
+      } else if (category === 'focus') {
+        if (now - this._lastFocusViolationAt < 350) {
+          this.triggerPrivacyShield(shieldReason);
+          return;
+        }
+        this._lastFocusViolationAt = now;
+      }
+      this.triggerPrivacyShield(shieldReason);
+      this.recordViolation(violationReason);
+    };
+
+    const clearClipboardSilently = () => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText('').catch(() => {});
+        }
+      } catch (err) {}
+    };
+
     const handleBlockedKeys = (e) => {
       if (!this.isExamActive) return;
 
-      const isPrintScreen = e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44;
+      const isPrintScreen = isPrintScreenKey(e);
       const isOsScreenshot =
-        (e.metaKey && e.shiftKey && ['S', 's', '3', '4', '5'].includes(e.key)) ||
+        (e.metaKey && e.shiftKey && ['S', 's', '3', '4', '5', '6'].includes(e.key)) ||
         (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) ||
         (e.ctrlKey && (e.key === 'p' || e.key === 'P')) ||
         (e.metaKey && (e.key === 'p' || e.key === 'P'));
 
       if (isPrintScreen || isOsScreenshot) {
-        e.preventDefault();
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText('').catch(() => {});
-          }
-        } catch (err) {}
-        this.triggerPrivacyShield('Tangkapan layar / pencetakan layar diblokir selama ujian berlangsung!');
-        this.recordViolation('Terdeteksi percobaan tangkapan layar / print layar!');
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        clearClipboardSilently();
+        triggerScreenshotOrFocusViolation(
+          'Tangkapan layar / pencetakan layar diblokir selama ujian berlangsung!',
+          isPrintScreen
+            ? 'Terdeteksi menekan tombol PrintScreen (percobaan tangkapan layar)!'
+            : 'Terdeteksi shortcut tangkapan layar / cetak layar!',
+          'keyboard'
+        );
         return;
       }
 
@@ -1151,45 +1200,68 @@ class ExamEngine {
     document.addEventListener('keydown', handleBlockedKeys);
     document.addEventListener('keyup', (e) => {
       if (!this.isExamActive) return;
-      if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
+      if (isPrintScreenKey(e)) {
         handleBlockedKeys(e);
       }
     });
 
     window.addEventListener('beforeprint', () => {
       if (this.isExamActive) {
-        this.triggerPrivacyShield('Pencetakan halaman diblokir selama ujian berlangsung!');
-        this.recordViolation('Terdeteksi percobaan mencetak halaman soal!');
+        triggerScreenshotOrFocusViolation(
+          'Pencetakan halaman diblokir selama ujian berlangsung!',
+          'Terdeteksi percobaan mencetak halaman soal!',
+          'keyboard'
+        );
       }
     });
 
     document.addEventListener('visibilitychange', () => {
-      if (this.isExamActive && document.hidden) {
-        this.triggerPrivacyShield('Layar soal disembunyikan karena Anda meninggalkan layar ujian.');
-        this.recordViolation('Terdeteksi berpindah tab atau meminimalkan browser!');
-      } else if (this.isExamActive && !document.hidden) {
+      if (this.isExamActive && (document.visibilityState === 'hidden' || document.hidden)) {
+        triggerScreenshotOrFocusViolation(
+          'Layar soal disembunyikan karena visibilitas halaman berubah atau Anda meninggalkan layar ujian.',
+          'Terdeteksi perubahan visibilityState (hidden) / berpindah tab / meminimalkan browser!',
+          'focus'
+        );
+      } else if (this.isExamActive && document.visibilityState === 'visible' && !document.hidden) {
         this.acquireScreenLock();
       }
     });
 
     window.addEventListener('blur', () => {
-      if (this.isExamActive && !document.hidden) {
-        this.triggerPrivacyShield('Layar soal dikunci sementara karena fokus layar berpindah / percobaan tangkapan layar.');
-        this.recordViolation('Terdeteksi keluar dari fokus layar ujian!');
+      if (this.isExamActive) {
+        triggerScreenshotOrFocusViolation(
+          'Layar soal dikunci sementara karena fokus layar berpindah / percobaan tangkapan layar.',
+          'Terdeteksi kehilangan fokus layar (blur) / percobaan tangkapan layar!',
+          'focus'
+        );
+      }
+    });
+
+    window.addEventListener('pagehide', () => {
+      if (this.isExamActive) {
+        triggerScreenshotOrFocusViolation(
+          'Layar soal dikunci karena halaman ujian ditinggalkan.',
+          'Terdeteksi meninggalkan halaman ujian (pagehide)!',
+          'focus'
+        );
       }
     });
 
     document.addEventListener('fullscreenchange', () => {
       if (this.isExamActive && !document.fullscreenElement) {
-        this.triggerPrivacyShield('Ujian wajib berjalan dalam mode Layar Penuh (Fullscreen).');
-        this.recordViolation('Keluar dari mode Layar Penuh (Fullscreen)!');
+        triggerScreenshotOrFocusViolation(
+          'Ujian wajib berjalan dalam mode Layar Penuh (Fullscreen).',
+          'Keluar dari mode Layar Penuh (Fullscreen)!',
+          'focus'
+        );
       }
     });
   }
 
   recordViolation(reason) {
-    if (!this.isExamActive || this._isFinishing) return;
+    if (!this.isExamActive || this._isFinishing || this._cheatLimitReached) return;
 
+    const maxViolations = Math.max(1, Number((this.config && this.config.maxCheatViolations) || 3));
     this.cheatCount++;
     const now = new Date();
     const timeStr = now.toLocaleTimeString('id-ID');
@@ -1204,15 +1276,16 @@ class ExamEngine {
     window.dispatchEvent(new CustomEvent('cbt-cheat-warning', {
       detail: {
         count: this.cheatCount,
-        max: this.config.maxCheatViolations,
+        max: maxViolations,
         reason: reason
       }
     }));
 
-    if (this.cheatCount >= this.config.maxCheatViolations) {
+    if (this.cheatCount >= maxViolations) {
+      this._cheatLimitReached = true;
       setTimeout(() => {
         if (this.isExamActive && !this._isFinishing) {
-          this.finishExam(`Ujian dihentikan otomatis karena terdeteksi ${this.cheatCount} kali pelanggaran anti-curang tab switch.`);
+          this.finishExam(`Ujian dihentikan otomatis karena terdeteksi ${this.cheatCount} kali pelanggaran anti-curang / tangkapan layar.`);
         }
       }, 1200);
     }
