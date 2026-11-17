@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>CBT Ujian Sekolah - SMP NEGERI 2 PACET</title>
+  <title>CBT Computer Based Test - SMP NEGERI 2 PACET</title>
   <meta name="description" content="Aplikasi Ujian Sekolah Berbasis Komputer (CBT) SMP Negeri 2 Pacet untuk 13 Guru Mapel & 250 Siswa.">
-  <meta property="og:title" content="CBT Ujian Sekolah - SMP NEGERI 2 PACET">
+  <meta property="og:title" content="CBT Computer Based Test - SMP NEGERI 2 PACET">
   <meta property="og:description" content="Aplikasi Ujian Sekolah Berbasis Komputer (CBT) SMP Negeri 2 Pacet.">
   <meta property="og:type" content="website">
 
@@ -59,29 +59,71 @@
   <!-- Supabase JS Client CDN (Sinkronisasi Cloud Real-Time Gratis) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+  <!-- D3.js v7 untuk Visualisasi Analisis Butir Soal & Statistik Nilai -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+
   <!-- Custom Stylesheet -->
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/styles.css?v=3.31">
 </head>
-<body class="bg-gradient-to-br from-[#eef4ff] via-[#f6f9ff] to-[#e4eeff] dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col antialiased select-none pb-safe transition-colors duration-200">
+<body class="bg-gradient-to-br from-[#b8c7dc] via-[#c6d3e6] to-[#aec0d8] dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col antialiased select-none pb-safe transition-colors duration-200">
 
   <!-- ======================== TOP NAVBAR (Tampil Saat Ujian & Panel Admin) ======================== -->
-  <header id="appTopHeader" class="hidden bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30 shadow-xs no-print transition-colors">
-    <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+  <header id="appTopHeader" class="hidden bg-gradient-to-r from-[#0c2e6e] via-[#124196] to-[#1a56c4] dark:from-slate-900/95 dark:via-slate-900/95 dark:to-slate-900/95 backdrop-blur-md border-b border-blue-900/50 dark:border-slate-800 sticky top-0 z-30 shadow-md no-print transition-colors">
+    <div class="w-full px-3 sm:px-5 lg:px-7 h-16 flex items-center justify-between">
 
       <!-- Brand Logo & Title -->
       <div class="flex items-center gap-2.5 sm:gap-3">
-        <div id="headerLogoBox" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white font-black text-base sm:text-lg shadow-md flex-shrink-0 overflow-hidden">
+        <div id="headerLogoBox" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center text-white font-black text-base sm:text-lg shadow-md flex-shrink-0 overflow-hidden">
           CBT
         </div>
         <div>
-          <h1 class="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight leading-tight">CBT Ujian Sekolah</h1>
-          <p id="headerSchoolName" class="text-[11px] sm:text-xs font-extrabold text-blue-700 dark:text-sky-400 tracking-wide leading-tight">SMP NEGERI 2 PACET</p>
+          <h1 class="text-sm sm:text-base font-bold text-white dark:text-slate-100 tracking-tight leading-tight">CBT Computer Based Test</h1>
+          <p id="headerSchoolName" class="text-[11px] sm:text-xs font-extrabold text-sky-200 dark:text-sky-400 tracking-wide leading-tight">SMP NEGERI 2 PACET</p>
         </div>
       </div>
 
-      <!-- Action Buttons Right (Dark Mode Toggle + Cloud Status) -->
+      <!-- Action Buttons Right (Notifikasi Real-Time + Dark Mode Toggle + Cloud Status) -->
       <div class="flex items-center gap-2">
-        <button id="btnDarkModeHeader" type="button" title="Aktifkan / Matikan Mode Gelap" aria-label="Ganti Mode Tampilan" class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-amber-300 dark:border-slate-700 transition cursor-pointer">
+        <!-- Lonceng Notifikasi Real-Time (Khusus Admin & Guru) -->
+        <div id="realtimeNotifContainer" class="hidden relative">
+          <button id="btnRealtimeNotifBell" type="button" title="Notifikasi Real-Time (Pelanggaran &amp; Selesai Ujian)" aria-label="Notifikasi Real-Time" class="relative inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold bg-white/15 hover:bg-white/25 text-white border border-white/25 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100 dark:border-slate-700 transition cursor-pointer">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+            <span class="hidden md:inline">Notifikasi</span>
+            <span id="realtimeNotifBadge" class="hidden min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-black inline-flex items-center justify-center shadow-sm">0</span>
+          </button>
+
+          <!-- Dropdown Riwayat Notifikasi Real-Time -->
+          <div id="realtimeNotifDropdown" class="hidden absolute right-0 mt-2 w-[330px] sm:w-[390px] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden z-50 text-slate-800 dark:text-slate-100">
+            <div class="px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-xs font-extrabold text-slate-900 dark:text-white truncate">🔔 Notifikasi Real-Time</span>
+                <span id="realtimeNotifLiveTag" class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase">Live</span>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button id="btnToggleNotifSound" type="button" class="px-2 py-1 rounded-lg text-[10px] font-bold bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer transition" title="Aktifkan/Matikan Bunyi Peringatan">
+                  🔊 Suara: ON
+                </button>
+                <button id="btnClearRealtimeNotifs" type="button" class="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition">
+                  Bersihkan
+                </button>
+              </div>
+            </div>
+
+            <div class="px-3 py-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5 text-[11px] font-bold">
+              <button type="button" data-notif-filter="ALL" class="notif-filter-btn px-2.5 py-1 rounded-lg bg-blue-600 text-white cursor-pointer transition">Semua</button>
+              <button type="button" data-notif-filter="cheat" class="notif-filter-btn px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer transition">⚠️ Curang</button>
+              <button type="button" data-notif-filter="completed" class="notif-filter-btn px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer transition">✅ Selesai</button>
+            </div>
+
+            <div id="realtimeNotifList" class="max-h-[340px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+              <div class="p-6 text-center text-xs text-slate-400">
+                Belum ada aktivitas pelanggaran atau penyelesaian ujian baru pada sesi ini.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button id="btnDarkModeHeader" type="button" title="Aktifkan / Matikan Mode Gelap" aria-label="Ganti Mode Tampilan" class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold bg-white/15 hover:bg-white/25 text-white border border-white/25 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-amber-300 dark:border-slate-700 transition cursor-pointer">
           <span id="darkModeIconHeader" class="flex items-center">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
           </span>
@@ -98,7 +140,7 @@
   </header>
 
   <!-- ======================== MAIN CONTAINER ======================== -->
-  <main class="flex-1 flex flex-col justify-center max-w-7xl w-full mx-auto p-3 sm:p-6 lg:p-8">
+  <main class="flex-1 flex flex-col justify-center w-full px-3 sm:px-5 lg:px-7 py-3 sm:py-5 lg:py-6">
 
     <!-- VIEW 1: PORTAL LOGIN CBT (2 KOLOM: INFO SEKOLAH + LOGIN SISWA / ADMIN & GURU) -->
     <section id="viewLogin" class="w-full max-w-[960px] mx-auto my-auto">
@@ -137,40 +179,13 @@
             </div>
           </div>
 
-          <!-- Ilustrasi Laptop, Buku & Perisai Keamanan (Tampil rapi di Tablet/Desktop) -->
-          <div class="hidden sm:flex relative z-10 my-6 items-center justify-center">
-            <svg viewBox="0 0 360 205" class="w-full max-w-[300px] h-auto drop-shadow-[0_18px_28px_rgba(0,20,70,0.35)]" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <ellipse cx="176" cy="182" rx="126" ry="12" fill="#001F6B" fill-opacity="0.45"/>
-              <!-- Stacked Books Right -->
-              <rect x="230" y="138" width="92" height="17" rx="4" fill="#DCE8FF"/>
-              <rect x="234" y="142" width="82" height="9" rx="2" fill="#FFFFFF"/>
-              <rect x="224" y="156" width="98" height="18" rx="4" fill="#C4DAFF"/>
-              <rect x="228" y="160" width="88" height="10" rx="2" fill="#EFF6FF"/>
-              <!-- Laptop Screen -->
-              <g transform="rotate(-3 155 110)">
-                <rect x="64" y="42" width="176" height="114" rx="11" fill="#1E40AF" stroke="#93C5FD" stroke-width="2.5"/>
-                <rect x="74" y="52" width="156" height="94" rx="7" fill="#F8FAFC"/>
-                <!-- Checklist Lines inside Screen -->
-                <path d="M90 73 L97 80 L109 67" stroke="#0066EB" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-                <rect x="120" y="70" width="76" height="7" rx="3.5" fill="#CBD5E1"/>
-                <path d="M90 98 L97 105 L109 92" stroke="#0066EB" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-                <rect x="120" y="95" width="92" height="7" rx="3.5" fill="#CBD5E1"/>
-                <path d="M90 123 L97 130 L109 117" stroke="#0066EB" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-                <rect x="120" y="120" width="66" height="7" rx="3.5" fill="#CBD5E1"/>
-              </g>
-              <!-- Laptop Base -->
-              <path d="M40 156 H244 L258 171 C260 174 257 177 253 177 H36 C32 177 29 174 31 171 L40 156 Z" fill="#E2EEFF"/>
-              <rect x="124" y="161" width="42" height="4" rx="2" fill="#94A3B8"/>
-              <!-- Security Shield Badge -->
-              <path d="M222 30 L264 46 V82 C264 111 245 130 222 140 C199 130 180 111 180 82 V46 L222 30 Z" fill="url(#shieldGrad)" stroke="#E0F2FE" stroke-width="3"/>
-              <path d="M206 83 L218 95 L241 70" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-              <defs>
-                <linearGradient id="shieldGrad" x1="180" y1="30" x2="264" y2="140" gradientUnits="userSpaceOnUse">
-                  <stop stop-color="#38BDF8"/>
-                  <stop offset="1" stop-color="#0052CC"/>
-                </linearGradient>
-              </defs>
-            </svg>
+          <!-- Ilustrasi Laptop CBT (Tampil rapi di Tablet/Desktop) -->
+          <div class="hidden sm:flex relative z-10 my-4 items-center justify-center">
+            <img
+              src="/assets/cbt-login-illustration.jpg"
+              alt="Ilustrasi Laptop CBT"
+              class="w-full max-w-[330px] aspect-[4/3] object-cover rounded-2xl ring-1 ring-white/20 shadow-[0_18px_36px_rgba(0,18,65,0.38)]"
+            />
           </div>
 
           <!-- 3 Keunggulan Sistem di Bagian Bawah Panel Biru -->
@@ -412,7 +427,7 @@
     </section>
 
     <!-- VIEW 3: RUANG UJIAN UTAMA (EXAM ROOM) -->
-    <section id="viewExamRoom" class="hidden w-full flex flex-col gap-3 sm:gap-4">
+    <section id="viewExamRoom" class="hidden w-full max-w-7xl mx-auto flex flex-col gap-3 sm:gap-4">
 
       <!-- Top Exam Bar -->
       <div class="bg-white rounded-2xl border border-slate-200 p-2.5 sm:p-4 shadow-sm flex items-center justify-between gap-2">
@@ -620,72 +635,289 @@
     <section id="viewAdmin" class="hidden w-full flex flex-col gap-4 sm:gap-6">
 
       <!-- Admin Top Banner -->
-      <div class="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 shadow-sm flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black flex-shrink-0">
-            <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+      <div class="bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3.5">
+          <div class="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-indigo-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M4 21V10l8-6 8 6v11M9 21v-5a3 3 0 016 0v5M12 10.5a1.25 1.25 0 100-2.5 1.25 1.25 0 000 2.5z"/></svg>
           </div>
           <div>
             <div class="flex flex-wrap items-center gap-2">
-              <h2 id="adminTeacherNameDisplay" class="text-base sm:text-lg font-bold text-slate-900">Panel Guru: Rekapitulasi Otomatis</h2>
-              <span id="adminRoleBadge" class="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-700">Guru Mapel</span>
+              <h2 id="adminTeacherNameDisplay" class="text-base sm:text-lg font-extrabold text-slate-900">Selamat Datang, Admin!</h2>
+              <span id="adminRoleBadge" class="hidden"></span>
             </div>
-            <p id="adminSubjectDisplay" class="text-[11px] sm:text-xs text-slate-500 font-medium">Panel Manajemen Ujian Sekolah</p>
+            <p id="adminSubjectDisplay" class="text-xs text-slate-500 font-medium">Administrator Sistem</p>
           </div>
         </div>
 
         <div class="flex items-center gap-2">
           <button id="btnAdminLogout" type="button" class="px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition cursor-pointer flex items-center gap-1.5">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-            <span>Keluar Panel</span>
+            <span>Keluar</span>
           </button>
         </div>
       </div>
 
-      <!-- Admin Tabs Navigation (7 Tabs dengan Gradasi Nyaman di Pandang) -->
-      <div id="adminTabsBar" class="flex flex-wrap items-center gap-2 p-2.5 rounded-2xl bg-gradient-to-r from-slate-100/95 via-blue-50/80 to-indigo-100/85 dark:from-slate-900 dark:via-slate-800/90 dark:to-indigo-950/75 border border-slate-200/80 dark:border-slate-700/80 shadow-xs text-xs sm:text-sm">
-        <button id="adminTabBtnResults" type="button" data-tab="tabResults" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-transparent shadow-md shadow-blue-600/25 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>📊 Rekap Nilai (Ranking)</span>
-        </button>
-        <button id="adminTabBtnMonitoring" type="button" data-tab="tabMonitoring" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-cyan-50 to-teal-100/80 text-teal-800 border-teal-200/80 dark:from-cyan-950/70 dark:to-teal-900/50 dark:text-teal-200 dark:border-teal-800/60 hover:brightness-95 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>📡 Pantau Login Siswa</span>
-        </button>
-        <button id="adminTabBtnSchedules" type="button" data-tab="tabSchedules" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-indigo-50 to-violet-100/80 text-indigo-800 border-indigo-200/80 dark:from-indigo-950/70 dark:to-violet-900/50 dark:text-indigo-200 dark:border-indigo-800/60 hover:brightness-95 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>📅 Jadwal &amp; Aktifkan Mapel</span>
-        </button>
-        <button id="adminTabBtnQuestions" type="button" data-tab="tabQuestions" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-emerald-50 to-teal-100/75 text-emerald-800 border-emerald-200/80 dark:from-emerald-950/70 dark:to-teal-900/50 dark:text-emerald-200 dark:border-emerald-800/60 hover:brightness-95 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>📝 Bank Soal Ujian</span>
-        </button>
-        <button id="adminTabBtnStudents" type="button" data-tab="tabStudents" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-amber-50 to-orange-100/75 text-amber-900 border-amber-200/80 dark:from-amber-950/70 dark:to-orange-900/50 dark:text-amber-200 dark:border-amber-800/60 hover:brightness-95 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>👥 Data Siswa</span>
-        </button>
-        <button id="adminTabBtnTeachers" type="button" data-tab="tabTeachers" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-rose-50 to-pink-100/75 text-rose-800 border-rose-200/80 dark:from-rose-950/70 dark:to-pink-900/50 dark:text-rose-200 dark:border-rose-800/60 hover:brightness-95 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>👨‍🏫 Data Guru</span>
-        </button>
-        <button id="adminTabBtnSettings" type="button" data-tab="tabSettings" class="admin-tab-btn px-3.5 py-2 rounded-xl font-bold border bg-gradient-to-r from-slate-100 to-indigo-100/80 text-slate-800 border-slate-300/80 dark:from-slate-800 dark:to-indigo-950/60 dark:text-slate-200 dark:border-slate-700 hover:brightness-95 flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap">
-          <span>⚙️ Pengaturan, Kop &amp; Cloud</span>
-        </button>
+      <!-- Workspace 2 Kolom: Sidebar Menu Kiri + Konten Utama Kanan -->
+      <div id="adminWorkspaceLayout" class="flex flex-col lg:flex-row items-start gap-4 sm:gap-5">
+        <!-- Sidebar Menu Kiri (Berjajar ke Bawah di Desktop, Scroll Horizontal di HP) -->
+        <aside class="w-full lg:w-60 xl:w-64 shrink-0 lg:sticky lg:top-20">
+          <div id="adminTabsBar" class="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-2.5 sm:p-3.5 shadow-xs flex lg:flex-col lg:justify-between lg:min-h-[calc(100vh-11rem)] gap-2 overflow-x-auto lg:overflow-x-visible">
+            <div class="flex lg:flex-col gap-1.5 sm:gap-2 w-full">
+              <div class="hidden lg:flex items-center justify-between px-2.5 pt-1 pb-2.5 mb-1 border-b border-slate-200/80 dark:border-slate-800">
+                <span class="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">Menu</span>
+              </div>
+              <button id="adminTabBtnDashboard" type="button" data-tab="tabDashboard" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-gradient-to-r from-[#124196] to-[#1a56c4] text-white border-transparent shadow-md shadow-blue-900/20 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>🏠 Dashboard</span>
+              </button>
+              <button id="adminTabBtnResults" type="button" data-tab="tabResults" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>📊 Rekap Nilai (Ranking)</span>
+              </button>
+              <button id="adminTabBtnMonitoring" type="button" data-tab="tabMonitoring" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>📡 Pantau Login Siswa</span>
+              </button>
+              <button id="adminTabBtnSchedules" type="button" data-tab="tabSchedules" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>📅 Jadwal &amp; Mapel</span>
+              </button>
+              <button id="adminTabBtnQuestions" type="button" data-tab="tabQuestions" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>📝 Bank Soal Ujian</span>
+              </button>
+              <button id="adminTabBtnStudents" type="button" data-tab="tabStudents" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>👥 Data Siswa</span>
+              </button>
+              <button id="adminTabBtnTeachers" type="button" data-tab="tabTeachers" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>👨‍🏫 Data Guru</span>
+              </button>
+              <button id="adminTabBtnSettings" type="button" data-tab="tabSettings" class="admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 flex items-center gap-2 cursor-pointer transition whitespace-nowrap">
+                <span>⚙️ Pengaturan, Kop &amp; Cloud</span>
+              </button>
+            </div>
+            <div class="hidden lg:block pt-3 mt-4 border-t border-slate-200/80 dark:border-slate-800 px-2.5">
+              <p class="text-[11px] font-bold text-slate-600 dark:text-slate-300">🏫 SMP Negeri 2 Pacet</p>
+              <p class="text-[10px] text-slate-400 mt-0.5">Ujian Berbasis Komputer</p>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Area Konten Tab (Kanan) -->
+        <div id="adminTabContentArea" class="flex-1 min-w-0 w-full flex flex-col gap-4">
+
+      <!-- TAB 0: DASHBOARD RINGKASAN CBT -->
+      <div id="tabDashboard" class="admin-tab-pane flex flex-col gap-4">
+
+        <!-- Bar Selamat Datang & Aksi Cepat -->
+        <div class="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-sm sm:text-base font-extrabold text-slate-900 dark:text-slate-100">Ringkasan Penyelenggaraan Ujian</h3>
+            <p id="dashOverviewSubtitle" class="text-xs text-slate-500 mt-0.5">Pantau kesiapan bank soal, jadwal aktif, dan perkembangan nilai siswa dalam satu layar.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="btnRefreshDashboardOverview" type="button" class="px-3.5 py-2 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1.5">
+              <span>🔄 Segarkan Data</span>
+            </button>
+            <button type="button" data-jump-tab="tabMonitoring" class="dash-jump-btn px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition cursor-pointer">
+              📡 Pantau Live
+            </button>
+            <button type="button" data-jump-tab="tabResults" class="dash-jump-btn px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-[#124196] to-[#1a56c4] hover:opacity-95 shadow-xs transition cursor-pointer">
+              📊 Buka Rekap Nilai
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 KPI Utama Dashboard -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div class="bg-gradient-to-br from-blue-600 via-blue-500 to-cyan-500 dark:from-blue-700 dark:via-blue-600 dark:to-cyan-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-blue-400/40 shadow-lg shadow-blue-500/20 flex items-center gap-3">
+            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-white/20 text-white flex items-center justify-center font-black text-lg sm:text-xl flex-shrink-0 shadow-inner">📝</div>
+            <div class="min-w-0">
+              <p class="text-[10px] font-bold text-blue-100 uppercase tracking-wider">Bank Soal</p>
+              <div id="dashKpiQuestions" class="text-lg sm:text-2xl font-black text-white">0 Soal</div>
+              <p id="dashKpiQuestionsSub" class="text-[10px] text-blue-50/90 font-medium truncate">0% lolos pra-ujian</p>
+            </div>
+          </div>
+
+          <div class="bg-gradient-to-br from-violet-600 via-purple-500 to-indigo-500 dark:from-violet-700 dark:via-purple-600 dark:to-indigo-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-purple-400/40 shadow-lg shadow-purple-500/20 flex items-center gap-3">
+            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-white/20 text-white flex items-center justify-center font-black text-lg sm:text-xl flex-shrink-0 shadow-inner">👥</div>
+            <div class="min-w-0">
+              <p class="text-[10px] font-bold text-purple-100 uppercase tracking-wider">Peserta</p>
+              <div id="dashKpiStudents" class="text-lg sm:text-2xl font-black text-white">0 Siswa</div>
+              <p id="dashKpiStudentsSub" class="text-[10px] text-purple-50/90 font-medium truncate">0 rombel terdaftar</p>
+            </div>
+          </div>
+
+          <div class="bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 dark:from-emerald-700 dark:via-emerald-600 dark:to-teal-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-emerald-400/40 shadow-lg shadow-emerald-500/20 flex items-center gap-3">
+            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-white/20 text-white flex items-center justify-center font-black text-lg sm:text-xl flex-shrink-0 shadow-inner">✅</div>
+            <div class="min-w-0">
+              <p class="text-[10px] font-bold text-emerald-100 uppercase tracking-wider">Nilai Masuk</p>
+              <div id="dashKpiResultsCount" class="text-lg sm:text-2xl font-black text-white">0 Hasil</div>
+              <p id="dashKpiResultsSub" class="text-[10px] text-emerald-50/95 font-medium truncate">0 siswa aktif ujian</p>
+            </div>
+          </div>
+
+          <div class="bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500 dark:from-amber-600 dark:via-orange-600 dark:to-rose-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-amber-400/40 shadow-lg shadow-orange-500/20 flex items-center gap-3">
+            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-white/20 text-white flex items-center justify-center font-black text-lg sm:text-xl flex-shrink-0 shadow-inner">🏆</div>
+            <div class="min-w-0">
+              <p class="text-[10px] font-bold text-amber-100 uppercase tracking-wider">Rata-Rata Nilai</p>
+              <div id="dashKpiAvgScore" class="text-lg sm:text-2xl font-black text-white">0.0</div>
+              <p id="dashKpiPassRate" class="text-[10px] text-amber-50/95 font-medium truncate">Ketuntasan (≥75): 0%</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Grid Grafik Distribusi Nilai (D3.js) + Kesiapan & Jadwal Aktif -->
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
+          <!-- Kiri: Grafik Distribusi Nilai Siswa (D3.js) -->
+          <div class="xl:col-span-7 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 flex flex-col gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 class="text-sm font-extrabold text-slate-900 dark:text-slate-100">Distribusi Nilai Siswa</h4>
+                <p class="text-[11px] text-slate-500">Sebaran nilai akhir ujian per rentang skor (batas ketuntasan minimal 75).</p>
+              </div>
+              <span class="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold">Grafik D3.js</span>
+            </div>
+            <div id="dashboardScoreDistChart" class="relative w-full min-h-[250px] flex items-center justify-center"></div>
+            <div class="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-center text-xs">
+              <div class="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+                <p class="text-[10px] text-slate-500 font-bold uppercase">Tertinggi</p>
+                <p id="dashDistHighest" class="font-black text-emerald-600 text-sm sm:text-base mt-0.5">-</p>
+              </div>
+              <div class="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+                <p class="text-[10px] text-slate-500 font-bold uppercase">Terendah</p>
+                <p id="dashDistLowest" class="font-black text-rose-600 text-sm sm:text-base mt-0.5">-</p>
+              </div>
+              <div class="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+                <p class="text-[10px] text-slate-500 font-bold uppercase">Tuntas (≥75)</p>
+                <p id="dashDistPassCount" class="font-black text-blue-700 text-sm sm:text-base mt-0.5">0 Siswa</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Kanan: Kesiapan Bank Soal & Jadwal Ujian Aktif -->
+          <div class="xl:col-span-5 flex flex-col gap-4">
+            <!-- Status Kelayakan Teknis Bank Soal -->
+            <div class="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-2">
+                <div>
+                  <h4 class="text-sm font-extrabold text-slate-900 dark:text-slate-100">Kesiapan Teknis Bank Soal</h4>
+                  <p class="text-[11px] text-slate-500">Audit otomatis kunci, opsi, bobot, dan duplikat soal.</p>
+                </div>
+                <button id="btnDashOpenPreExam" type="button" class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 transition cursor-pointer whitespace-nowrap">
+                  🛡️ Detail Cek →
+                </button>
+              </div>
+              <div id="dashboardReadinessBox" class="space-y-2.5"></div>
+            </div>
+
+            <!-- Jadwal & Token Ujian Aktif -->
+            <div class="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 flex flex-col gap-3 flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <div>
+                  <h4 class="text-sm font-extrabold text-slate-900 dark:text-slate-100">Jadwal &amp; Token Ujian Aktif</h4>
+                  <p class="text-[11px] text-slate-500">Mata pelajaran yang sedang dibuka untuk peserta.</p>
+                </div>
+                <button id="btnDashOpenSchedules" type="button" data-jump-tab="tabSchedules" class="dash-jump-btn px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer whitespace-nowrap">
+                  📅 Atur Jadwal
+                </button>
+              </div>
+              <div id="dashboardActiveSchedulesList" class="space-y-2"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ringkasan Peringkat / Hasil Terbaru -->
+        <div class="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 flex flex-col gap-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 class="text-sm font-extrabold text-slate-900 dark:text-slate-100">5 Nilai Teratas / Terbaru Masuk</h4>
+              <p class="text-[11px] text-slate-500">Cuplikan capaian siswa sesuai cakupan mata pelajaran &amp; kelas Anda.</p>
+            </div>
+            <button type="button" data-jump-tab="tabResults" class="dash-jump-btn text-xs font-bold text-blue-700 hover:underline cursor-pointer">
+              Lihat Semua di Rekap Nilai →
+            </button>
+          </div>
+          <div id="dashboardRecentResultsList" class="overflow-x-auto"></div>
+        </div>
+
       </div>
 
       <!-- TAB 1: REKAP NILAI SISWA DENGAN DETAIL JAWABAN PER NOMOR -->
-      <div id="tabResults" class="admin-tab-pane flex flex-col gap-4">
+      <div id="tabResults" class="admin-tab-pane hidden flex flex-col gap-4">
 
-        <!-- Filter Bar: Mapel & Kelas -->
-        <div class="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="font-bold text-slate-700 dark:text-slate-200">Filter Rekap:</span>
-            <select id="filterResultsSubject" class="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-blue-700 bg-white outline-none">
+        <!-- Filter Bar: Mapel, Kelas & Pencarian Siswa -->
+        <div class="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-wrap xl:flex-nowrap items-center justify-between gap-2.5 text-xs sm:text-sm">
+          <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+            <span class="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">Filter Rekap:</span>
+            <select id="filterResultsSubject" class="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-blue-700 bg-white outline-none max-w-[200px]">
               <option value="ALL">Semua Mata Pelajaran</option>
             </select>
             <select id="filterResultsClass" class="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-slate-700 bg-white outline-none">
               <option value="ALL">Semua Kelas</option>
             </select>
+            <input id="searchResultsInput" type="search" placeholder="🔍 Cari nama atau NISN siswa..." class="px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-[170px] max-w-[260px]">
+            <select id="filterResultsStudent" class="px-3 py-1.5 rounded-xl border border-indigo-300 bg-indigo-50/70 font-bold text-indigo-800 outline-none max-w-[230px]" title="Pilih 1 siswa tertentu untuk membuka riwayat jawaban lengkap saat konsultasi nilai">
+              <option value="ALL">👤 Konsultasi 1 Siswa (Semua)</option>
+            </select>
           </div>
 
-          <div class="flex items-center gap-2">
-            <button id="btnSyncCloudResults" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1" title="Tarik data terbaru yang disubmit 250 siswa">
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="btnSyncCloudResults" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1 whitespace-nowrap" title="Tarik data terbaru yang disubmit 250 siswa">
               <span>🔄 Sinkron Cloud</span>
             </button>
+          </div>
+        </div>
+
+        <!-- Panel Konsultasi Riwayat Jawaban Lengkap 1 Siswa -->
+        <div id="studentConsultationPanel" class="hidden bg-white dark:bg-slate-900 rounded-3xl border-2 border-indigo-200 dark:border-indigo-800 p-4 sm:p-5 flex flex-col gap-4 shadow-sm">
+          <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div>
+              <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[10px] uppercase tracking-wider mb-1">
+                💬 Mode Konsultasi Hasil Nilai Siswa
+              </span>
+              <h3 id="consultStudentTitle" class="text-sm sm:text-base font-extrabold text-slate-900 dark:text-slate-100">-</h3>
+              <p id="consultStudentMeta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">-</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="consultAttemptSelect" class="hidden px-2.5 py-1.5 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-700 outline-none"></select>
+              <button id="btnResetConsultStudent" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
+                ✕ Tutup Konsultasi
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-center">
+            <div class="p-2.5 rounded-2xl bg-indigo-50 border border-indigo-200">
+              <div class="text-[10px] font-bold text-indigo-700 uppercase">Nilai Akhir</div>
+              <div id="consultScoreVal" class="text-lg font-black text-indigo-900 mt-0.5">0</div>
+            </div>
+            <div class="p-2.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+              <div class="text-[10px] font-bold text-emerald-700 uppercase">Benar</div>
+              <div id="consultCorrectVal" class="text-lg font-black text-emerald-700 mt-0.5">0</div>
+            </div>
+            <div class="p-2.5 rounded-2xl bg-rose-50 border border-rose-200">
+              <div class="text-[10px] font-bold text-rose-700 uppercase">Salah</div>
+              <div id="consultWrongVal" class="text-lg font-black text-rose-700 mt-0.5">0</div>
+            </div>
+            <div class="p-2.5 rounded-2xl bg-slate-50 border border-slate-200">
+              <div class="text-[10px] font-bold text-slate-600 uppercase">Kosong</div>
+              <div id="consultEmptyVal" class="text-lg font-black text-slate-700 mt-0.5">0</div>
+            </div>
+            <div class="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 col-span-2 sm:col-span-1">
+              <div class="text-[10px] font-bold text-amber-800 uppercase">Pindah Tab</div>
+              <div id="consultCheatVal" class="text-sm font-black text-amber-800 mt-1">-</div>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto max-h-[360px] rounded-2xl border border-slate-200 dark:border-slate-700">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="sticky top-0 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 uppercase tracking-wider font-bold text-[10px]">
+                <tr>
+                  <th class="p-2.5 text-center w-12">No</th>
+                  <th class="p-2.5 min-w-[230px]">Butir Pertanyaan</th>
+                  <th class="p-2.5 text-center">Jawaban Siswa</th>
+                  <th class="p-2.5 text-center">Kunci Jawaban</th>
+                  <th class="p-2.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody id="consultBreakdownTbody"></tbody>
+            </table>
           </div>
         </div>
 
@@ -758,15 +990,15 @@
             <table class="w-full text-left border-collapse">
               <thead>
                 <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 text-[11px] uppercase tracking-wider font-bold">
-                  <th class="p-3 text-center">Rank</th>
-                  <th class="p-3">Nama Siswa</th>
-                  <th class="p-3">NISN</th>
-                  <th class="p-3">Kelas</th>
-                  <th class="p-3 text-center">Nilai Akhir</th>
-                  <th class="p-3 min-w-[260px]">Jawaban Siswa (Benar &amp; Salah per Nomor)</th>
-                  <th class="p-3">Waktu Selesai</th>
-                  <th class="p-3 text-center">B / S / K</th>
-                  <th class="p-3">Keterangan Curang</th>
+                  <th class="px-2.5 py-3 text-center whitespace-nowrap">Rank</th>
+                  <th class="px-2.5 py-3 whitespace-nowrap">Nama Siswa</th>
+                  <th class="px-2.5 py-3 whitespace-nowrap">NISN</th>
+                  <th class="px-2.5 py-3 whitespace-nowrap">Kelas</th>
+                  <th class="px-2.5 py-3 text-center whitespace-nowrap">Nilai</th>
+                  <th class="px-2.5 py-3 min-w-[210px]">Jawaban Siswa (Benar &amp; Salah per Nomor)</th>
+                  <th class="px-2.5 py-3 whitespace-nowrap">Waktu Selesai</th>
+                  <th class="px-2.5 py-3 text-center whitespace-nowrap">B / S / K</th>
+                  <th class="px-2.5 py-3 whitespace-nowrap">Ket. Curang</th>
                 </tr>
               </thead>
               <tbody id="adminResultsTbody"></tbody>
@@ -1018,6 +1250,12 @@
               <button id="btnExportQuestions" type="button" class="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
                 📤 Ekspor JSON
               </button>
+              <button id="btnTogglePreExamAudit" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 transition cursor-pointer flex items-center gap-1">
+                <span>🛡️ Cek Pra-Ujian</span>
+              </button>
+              <button id="btnToggleItemAnalysis" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition cursor-pointer flex items-center gap-1">
+                <span>📈 Analisis Butir Soal</span>
+              </button>
               <button id="btnOpenPrintQuestions" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition shadow-sm cursor-pointer flex items-center gap-1">
                 <span>📄 Download Naskah Soal</span>
               </button>
@@ -1043,6 +1281,264 @@
                 <option value="Kelas 8">Kelas 8</option>
                 <option value="Kelas 9">Kelas 9</option>
               </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel Khusus Admin: Cek Progres Pengisian Soal Semua Guru -->
+        <div id="adminTeacherQuestionProgressPanel" class="hidden bg-white dark:bg-slate-900 rounded-3xl border border-indigo-200/80 dark:border-slate-800 p-4 sm:p-5 flex flex-col gap-3.5 shadow-xs">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <h3 class="text-sm sm:text-base font-extrabold text-slate-900 dark:text-slate-100">📊 Cek Progres Pengisian Soal Semua Guru</h3>
+                <span class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[10px]">Khusus Admin / Proktor</span>
+              </div>
+              <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Pantau jumlah soal per mapel diampu sekaligus soal yang diinput langsung oleh masing-masing guru.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <label for="teacherProgressTargetInput" class="text-[11px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                <span>Target Min:</span>
+                <input id="teacherProgressTargetInput" type="number" min="1" max="200" value="20" class="w-12 px-1.5 py-0.5 rounded-lg border border-slate-300 bg-white text-center font-extrabold text-blue-700 outline-none">
+                <span>Soal</span>
+              </label>
+              <button id="btnToggleTeacherProgress" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
+                ▾ Sembunyikan
+              </button>
+            </div>
+          </div>
+
+          <div id="teacherProgressBody" class="flex flex-col gap-3">
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Guru Mapel</p>
+                <div id="tpKpiTotalTeachers" class="text-lg font-black text-slate-900 dark:text-slate-100 mt-0.5">0 Guru</div>
+              </div>
+              <div class="p-3 rounded-2xl bg-emerald-50 border border-emerald-200">
+                <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Memenuhi Target</p>
+                <div id="tpKpiReadyTeachers" class="text-lg font-black text-emerald-700 mt-0.5">0 Guru</div>
+              </div>
+              <div class="p-3 rounded-2xl bg-amber-50 border border-amber-200">
+                <p class="text-[10px] font-bold text-amber-800 uppercase tracking-wider">Sedang Mengisi</p>
+                <div id="tpKpiPartialTeachers" class="text-lg font-black text-amber-700 mt-0.5">0 Guru</div>
+              </div>
+              <div class="p-3 rounded-2xl bg-rose-50 border border-rose-200">
+                <p class="text-[10px] font-bold text-rose-700 uppercase tracking-wider">Belum Mengisi (0)</p>
+                <div id="tpKpiEmptyTeachers" class="text-lg font-black text-rose-700 mt-0.5">0 Guru</div>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs">
+              <input id="searchTeacherProgress" type="search" placeholder="🔍 Cari nama guru, NIP, atau mapel..." class="px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-[200px] max-w-sm">
+              <select id="filterTeacherProgressStatus" class="px-3 py-1.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-700 outline-none">
+                <option value="ALL">Semua Status Progres</option>
+                <option value="empty">Belum Mengisi (0 Soal)</option>
+                <option value="partial">Masih Kurang (&lt; Target)</option>
+                <option value="ready">Sudah Siap (≥ Target)</option>
+              </select>
+            </div>
+
+            <div class="overflow-x-auto max-h-[360px] rounded-2xl border border-slate-200 dark:border-slate-700">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead class="sticky top-0 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 uppercase tracking-wider font-bold text-[10px]">
+                  <tr>
+                    <th class="p-2.5 text-center w-10">No</th>
+                    <th class="p-2.5 min-w-[180px]">Nama Guru &amp; NIP</th>
+                    <th class="p-2.5 min-w-[210px]">Rincian Mapel Diampu</th>
+                    <th class="p-2.5 text-center">Tipe Soal</th>
+                    <th class="p-2.5 min-w-[175px]">Progres vs Target</th>
+                    <th class="p-2.5 text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="adminTeacherProgressTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel Cek Pra-Ujian & Analisis Butir Soal -->
+        <div id="itemAnalysisPanel" class="hidden bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 flex flex-col gap-4 shadow-xs">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 id="itemAnalysisPanelTitle" class="text-sm sm:text-base font-bold text-slate-900">📈 Analisis Kualitas Butir Soal</h3>
+              <p id="itemAnalysisSubtitle" class="text-[11px] text-slate-500 mt-0.5">Validasi teknis sebelum ujian maupun analisis kesukaran (P) &amp; daya pembeda (D) sesudah dikerjakan siswa.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="btnCloseItemAnalysis" type="button" class="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
+                ✕ Tutup
+              </button>
+            </div>
+          </div>
+
+          <!-- Switcher Mode Pra-Ujian vs Pasca-Ujian -->
+          <div class="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-slate-100 border border-slate-200 w-fit">
+            <button id="btnModePreExamAudit" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer bg-white text-teal-800 shadow-xs">
+              🛡️ Cek Kelayakan Pra-Ujian (Sebelum Ujian)
+            </button>
+            <button id="btnModeEmpiricalAnalysis" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer text-slate-600 hover:text-slate-900">
+              📈 Analisis P &amp; D (Sesudah Dikerjakan)
+            </button>
+          </div>
+
+          <!-- MODE 1: CEK KELAYAKAN TEKNIS PRA-UJIAN -->
+          <div id="preExamAuditSection" class="flex flex-col gap-4">
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div class="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+                <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Siap Diujikan</p>
+                <div id="peKpiReady" class="text-lg sm:text-xl font-black text-emerald-700 mt-0.5">0 / 0</div>
+                <p id="peKpiReadyPercent" class="text-[10px] text-emerald-700/80">0% soal lolos cek teknis</p>
+              </div>
+              <div class="p-3.5 rounded-2xl bg-amber-50 border border-amber-200">
+                <p class="text-[10px] font-bold text-amber-800 uppercase tracking-wider">Perlu Dicek</p>
+                <div id="peKpiWarning" class="text-lg sm:text-xl font-black text-amber-700 mt-0.5">0</div>
+                <p class="text-[10px] text-amber-800/80">Indikasi duplikat / mapel umum</p>
+              </div>
+              <div class="p-3.5 rounded-2xl bg-rose-50 border border-rose-200">
+                <p class="text-[10px] font-bold text-rose-700 uppercase tracking-wider">Perlu Perbaikan</p>
+                <div id="peKpiError" class="text-lg sm:text-xl font-black text-rose-700 mt-0.5">0</div>
+                <p class="text-[10px] text-rose-700/80">Kunci/opsi/bobot bermasalah</p>
+              </div>
+              <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Bobot Soal</p>
+                <div id="peKpiTotalWeight" class="text-lg sm:text-xl font-black text-slate-900 mt-0.5">0</div>
+                <p class="text-[10px] text-slate-500">Akumulasi bobot filter aktif</p>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
+              <div class="flex flex-wrap items-center gap-2">
+                <label for="filterPreExamStatus" class="font-bold text-slate-700">Filter Status:</label>
+                <select id="filterPreExamStatus" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-bold text-slate-700 outline-none">
+                  <option value="ALL">Semua Butir Soal</option>
+                  <option value="error">Perlu Perbaikan (Kritis)</option>
+                  <option value="warning">Perlu Dicek (Peringatan)</option>
+                  <option value="ready">Siap Diujikan</option>
+                </select>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-slate-500 font-medium hidden md:inline">Memeriksa kunci jawaban, opsi kosong/kembar, bobot, dan duplikat soal sebelum ujian dimulai.</span>
+                <button id="btnExportPreExamAuditExcel" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition shadow-xs cursor-pointer flex items-center gap-1">
+                  <span>📥 Ekspor Cek Pra-Ujian (.xlsx)</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto max-h-[380px] rounded-2xl border border-slate-200">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-600 uppercase tracking-wider font-bold text-[10px]">
+                  <tr>
+                    <th class="p-2.5 text-center w-10">No</th>
+                    <th class="p-2.5 min-w-[210px]">Cuplikan Soal &amp; Mapel</th>
+                    <th class="p-2.5 text-center">Tipe</th>
+                    <th class="p-2.5 text-center">Bobot</th>
+                    <th class="p-2.5 text-center">Status Teknis</th>
+                    <th class="p-2.5 min-w-[230px]">Catatan Pemeriksaan</th>
+                  </tr>
+                </thead>
+                <tbody id="preExamAuditTbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- MODE 2: ANALISIS EMPIRIS P & D (SESUDAH DIKERJAKAN SISWA) -->
+          <div id="empiricalAnalysisSection" class="hidden flex flex-col gap-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-[11px] text-slate-500 font-medium">Dihitung dari lembar jawaban siswa yang sudah menyelesaikan ujian.</span>
+              <div class="flex flex-wrap items-center gap-2">
+                <button id="btnSyncItemAnalysisCloud" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1">
+                  <span>🔄 Tarik Nilai Cloud</span>
+                </button>
+                <button id="btnExportItemAnalysisExcel" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition shadow-xs cursor-pointer flex items-center gap-1">
+                  <span>📥 Ekspor Analisis (.xlsx)</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Soal Teranalisis</p>
+                <div id="iaKpiAnalyzed" class="text-lg sm:text-xl font-black text-slate-900 mt-0.5">0 / 0</div>
+                <p id="iaKpiRespondents" class="text-[10px] text-slate-500">0 peserta tercatat</p>
+              </div>
+              <div class="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+                <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Layak / Baik</p>
+                <div id="iaKpiGood" class="text-lg sm:text-xl font-black text-emerald-700 mt-0.5">0</div>
+                <p class="text-[10px] text-emerald-700/80">D ≥ 0,30 &amp; P ideal</p>
+              </div>
+              <div class="p-3.5 rounded-2xl bg-amber-50 border border-amber-200">
+                <p class="text-[10px] font-bold text-amber-800 uppercase tracking-wider">Perlu Revisi</p>
+                <div id="iaKpiRevise" class="text-lg sm:text-xl font-black text-amber-700 mt-0.5">0</div>
+                <p class="text-[10px] text-amber-800/80">D 0,20–0,29 / ekstrem</p>
+              </div>
+              <div class="p-3.5 rounded-2xl bg-rose-50 border border-rose-200">
+                <p class="text-[10px] font-bold text-rose-700 uppercase tracking-wider">Bermasalah</p>
+                <div id="iaKpiBad" class="text-lg sm:text-xl font-black text-rose-700 mt-0.5">0</div>
+                <p class="text-[10px] text-rose-700/80">D &lt; 0,20 (cek kunci/ganti)</p>
+              </div>
+            </div>
+
+            <!-- Visualisasi Data D3.js: Peta Sebaran P vs D & Grafik Batang per Nomor Soal -->
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div class="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/60 border border-slate-200 flex flex-col gap-2.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h5 class="text-xs sm:text-sm font-extrabold text-slate-800 dark:text-slate-100">Peta Sebaran Kualitas Soal (P vs D)</h5>
+                    <p class="text-[11px] text-slate-500">Arahkan kursor ke titik nomor soal untuk melihat detail kualitas &amp; saran.</p>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                    <span class="inline-flex items-center gap-1 text-emerald-700"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>Layak</span>
+                    <span class="inline-flex items-center gap-1 text-amber-700"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>Revisi</span>
+                    <span class="inline-flex items-center gap-1 text-rose-700"><span class="w-2.5 h-2.5 rounded-full bg-rose-600 inline-block"></span>Bermasalah</span>
+                  </div>
+                </div>
+                <div id="itemAnalysisScatterChart" class="relative w-full min-h-[280px] flex items-center justify-center"></div>
+              </div>
+
+              <div class="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/60 border border-slate-200 flex flex-col gap-2.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h5 class="text-xs sm:text-sm font-extrabold text-slate-800 dark:text-slate-100">Grafik Nilai P &amp; D per Nomor Soal</h5>
+                    <p class="text-[11px] text-slate-500">Membandingkan tingkat kesukaran (P) dan daya pembeda (D) tiap butir.</p>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                    <span class="inline-flex items-center gap-1 text-blue-700"><span class="w-2.5 h-2.5 rounded-xs bg-blue-500 inline-block"></span>Kesukaran (P)</span>
+                    <span class="inline-flex items-center gap-1 text-emerald-700"><span class="w-2.5 h-2.5 rounded-xs bg-emerald-500 inline-block"></span>Daya Pembeda (D ≥ 0,30)</span>
+                  </div>
+                </div>
+                <div id="itemAnalysisBarChart" class="relative w-full min-h-[280px] overflow-x-auto flex items-center justify-center"></div>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
+              <div class="flex flex-wrap items-center gap-2">
+                <label for="filterItemAnalysisQuality" class="font-bold text-slate-700">Filter Kualitas:</label>
+                <select id="filterItemAnalysisQuality" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-bold text-slate-700 outline-none">
+                  <option value="ALL">Semua Butir Soal</option>
+                  <option value="bad">Bermasalah (D &lt; 0,20)</option>
+                  <option value="revise">Perlu Revisi</option>
+                  <option value="good">Layak / Baik</option>
+                  <option value="no_data">Belum Ada Data</option>
+                </select>
+              </div>
+              <div class="text-slate-500 font-medium">
+                <strong>P:</strong> &lt;0,30 Sukar · 0,30–0,70 Sedang · &gt;0,70 Mudah &nbsp;|&nbsp; <strong>D:</strong> ≥0,40 Sangat Baik · 0,30–0,39 Baik · 0,20–0,29 Cukup · &lt;0,20 Revisi
+              </div>
+            </div>
+
+            <div class="overflow-x-auto max-h-[380px] rounded-2xl border border-slate-200">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-600 uppercase tracking-wider font-bold text-[10px]">
+                  <tr>
+                    <th class="p-2.5 text-center w-10">No</th>
+                    <th class="p-2.5 min-w-[210px]">Cuplikan Soal &amp; Mapel</th>
+                    <th class="p-2.5 text-center">N</th>
+                    <th class="p-2.5 text-center">B / S / K</th>
+                    <th class="p-2.5 text-center">Kesukaran (P)</th>
+                    <th class="p-2.5 text-center">Daya Pembeda (D)</th>
+                    <th class="p-2.5 min-w-[200px]">Status &amp; Rekomendasi</th>
+                  </tr>
+                </thead>
+                <tbody id="itemAnalysisTbody"></tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -1418,65 +1914,68 @@
         </div>
       </div>
 
+        </div>
+      </div>
+
     </section>
 
   </main>
 
   <!-- ======================== TEMPLATE CETAK PDF RESMI GURU ======================== -->
-  <div id="printableTeacherReport" class="hidden p-6 bg-white text-slate-900 font-sans max-w-6xl mx-auto">
+  <div id="printableTeacherReport" class="hidden p-4 bg-white text-slate-900 font-sans max-w-6xl mx-auto">
     <!-- Kop Surat dengan Logo Kiri & Logo Kanan -->
     <div id="repKopSurat"></div>
 
-    <div class="mb-4 bg-slate-50 border border-slate-300 rounded-xl p-3">
-      <h3 class="text-xs font-bold uppercase text-slate-700 mb-2 border-b border-slate-200 pb-1">Ringkasan Statistik Rekapitulasi:</h3>
-      <div class="grid grid-cols-5 gap-3 text-xs text-center">
-        <div class="p-2 bg-white rounded border border-slate-200">
+    <div id="repSummaryBox" style="break-inside: avoid; page-break-inside: avoid;" class="mb-3 bg-slate-50 border border-slate-300 rounded-xl p-2.5">
+      <h3 class="text-[11px] font-bold uppercase text-slate-700 mb-1.5 border-b border-slate-200 pb-1">Ringkasan Statistik Rekapitulasi:</h3>
+      <div class="grid grid-cols-5 gap-2.5 text-xs text-center">
+        <div class="p-1.5 bg-white rounded border border-slate-200">
           <span class="text-slate-500 block text-[10px]">Rata-Rata Nilai</span>
-          <span id="repAvg" class="text-base font-black text-blue-700">0</span>
+          <span id="repAvg" class="text-sm font-black text-blue-700">0</span>
         </div>
-        <div class="p-2 bg-white rounded border border-slate-200">
+        <div class="p-1.5 bg-white rounded border border-slate-200">
           <span class="text-slate-500 block text-[10px]">Nilai Tertinggi</span>
-          <span id="repHigh" class="text-base font-black text-emerald-700">0</span>
+          <span id="repHigh" class="text-sm font-black text-emerald-700">0</span>
         </div>
-        <div class="p-2 bg-white rounded border border-slate-200">
+        <div class="p-1.5 bg-white rounded border border-slate-200">
           <span class="text-slate-500 block text-[10px]">Nilai Terendah</span>
-          <span id="repLow" class="text-base font-black text-amber-700">0</span>
+          <span id="repLow" class="text-sm font-black text-amber-700">0</span>
         </div>
-        <div class="p-2 bg-white rounded border border-slate-200">
+        <div class="p-1.5 bg-white rounded border border-slate-200">
           <span class="text-slate-500 block text-[10px]">Total Peserta</span>
-          <span id="repTotal" class="text-base font-black text-slate-900">0</span>
+          <span id="repTotal" class="text-sm font-black text-slate-900">0</span>
         </div>
-        <div class="p-2 bg-white rounded border border-slate-200">
+        <div class="p-1.5 bg-white rounded border border-slate-200">
           <span class="text-slate-500 block text-[10px]">Ketuntasan (≥75)</span>
-          <span id="repPass" class="text-base font-black text-purple-700">0%</span>
+          <span id="repPass" class="text-sm font-black text-purple-700">0%</span>
         </div>
       </div>
     </div>
 
-    <table class="w-full border-collapse border border-slate-300 text-xs mb-6">
+    <table class="w-full border-collapse border border-slate-300 text-xs mb-3">
       <thead>
         <tr class="bg-slate-100 border-b border-slate-300 font-bold text-slate-700">
-          <th class="p-2 border border-slate-300 text-center w-10">Rank</th>
-          <th class="p-2 border border-slate-300">Nama Siswa</th>
-          <th class="p-2 border border-slate-300 w-24">NISN</th>
-          <th class="p-2 border border-slate-300 w-14 text-center">Kelas</th>
-          <th class="p-2 border border-slate-300 text-center w-16">Nilai Akhir</th>
-          <th class="p-2 border border-slate-300">Jawaban Siswa (Per Nomor)</th>
-          <th class="p-2 border border-slate-300 text-center w-28">Waktu Selesai</th>
-          <th class="p-2 border border-slate-300 text-center w-16">B/S/K</th>
-          <th class="p-2 border border-slate-300 text-center w-20">Ket. Curang</th>
+          <th class="p-1.5 border border-slate-300 text-center w-10">Rank</th>
+          <th class="p-1.5 border border-slate-300">Nama Siswa</th>
+          <th class="p-1.5 border border-slate-300 w-24">NISN</th>
+          <th class="p-1.5 border border-slate-300 w-14 text-center">Kelas</th>
+          <th class="p-1.5 border border-slate-300 text-center w-16">Nilai Akhir</th>
+          <th class="p-1.5 border border-slate-300">Jawaban Siswa (Per Nomor)</th>
+          <th class="p-1.5 border border-slate-300 text-center w-28">Waktu Selesai</th>
+          <th class="p-1.5 border border-slate-300 text-center w-16">B/S/K</th>
+          <th class="p-1.5 border border-slate-300 text-center w-20">Ket. Curang</th>
         </tr>
       </thead>
       <tbody id="repTableBody"></tbody>
     </table>
 
     <!-- Tanda Tangan Mengetahui Kepala Sekolah & Dibuat Oleh Guru Mapel -->
-    <div class="flex justify-between text-xs pt-4 border-t border-slate-300">
+    <div id="repSignatureBlock" style="break-inside: avoid; page-break-inside: avoid;" class="flex justify-between text-xs pt-2.5 border-t border-slate-300">
       <div class="text-center w-64">
         <p id="repTitiMangsaLeft" class="text-transparent select-none">.</p>
         <p>Mengetahui,</p>
         <p class="font-bold">Kepala Sekolah</p>
-        <div class="h-16"></div>
+        <div class="h-12"></div>
         <p id="repHeadmasterName" class="font-bold underline">Drs. H. Mulyono, M.Pd.</p>
         <p id="repHeadmasterNip" class="text-[10px] text-slate-500">NIP. 19680512 199403 1 004</p>
       </div>
@@ -1484,13 +1983,13 @@
         <p id="repTitiMangsa" class="font-medium text-slate-700">Pacet, ...</p>
         <p>Dibuat Oleh,</p>
         <p class="font-bold">Guru Mata Pelajaran</p>
-        <div class="h-16"></div>
+        <div class="h-12"></div>
         <p id="repTeacherName" class="font-bold underline">Guru Mata Pelajaran</p>
         <p id="repTeacherNip" class="text-[10px] text-slate-500">NIP. —</p>
       </div>
     </div>
 
-    <div id="repAutoPrintNote" class="cbt-print-footer-note mt-4 pt-2 border-t border-slate-200" style="font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+    <div id="repAutoPrintNote" style="break-inside: avoid; page-break-inside: avoid; font-size:8.5px; color:#1d4ed8; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" class="cbt-print-footer-note mt-2.5 pt-1.5 border-t border-slate-200"></div>
   </div>
 
   <!-- TEMPLATE CETAK & PDF KARTU PESERTA UJIAN (UKURAN 9,0 x 5,3 CM) -->
@@ -1537,6 +2036,29 @@
         </button>
         <button id="btnConfirmFinishFinal" type="button" class="flex-1 py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-green-600 hover:bg-green-700 transition cursor-pointer">
           Ya, Selesaikan
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: KONFIRMASI KELUAR (ADMIN/GURU & SISWA BERBEDA) -->
+  <div id="modalLogoutConfirm" class="hidden fixed inset-0 z-[70] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl max-w-md w-full p-6 text-center shadow-2xl border border-slate-200 dark:border-slate-800">
+      <div id="logoutModalIconBox" class="w-11 h-11 rounded-2xl mx-auto flex items-center justify-center mb-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+      </div>
+      <p id="logoutModalSubtitle" class="text-xs font-bold text-slate-500 dark:text-slate-400">Konfirmasi Keluar</p>
+      <h3 id="logoutModalTitle" class="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white mt-1.5">Apakah Anda yakin ingin keluar dari aplikasi CBT?</h3>
+      <p id="logoutModalDesc" class="text-xs text-slate-500 dark:text-slate-400 mt-1.5 mb-5 leading-relaxed">
+        Anda dapat login kembali kapan saja untuk mengakses aplikasi.
+      </p>
+
+      <div class="grid grid-cols-2 gap-3">
+        <button id="btnCancelLogoutConfirm" type="button" class="py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 transition cursor-pointer">
+          Tidak
+        </button>
+        <button id="btnConfirmLogoutFinal" type="button" class="py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-600/20 transition cursor-pointer">
+          Ya, Keluar
         </button>
       </div>
     </div>
@@ -1642,12 +2164,11 @@
         </div>
 
         <div id="sectionOptionsAE" class="space-y-2">
-          <label class="block font-bold text-slate-700">Pilihan Jawaban (A - E)</label>
+          <label class="block font-bold text-slate-700">Pilihan Jawaban (A - D)</label>
           <div class="flex items-center gap-2"><span class="w-6 font-bold text-slate-500">A</span><input type="text" id="qInputOptA" placeholder="Teks Pilihan A" class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 outline-none"></div>
           <div class="flex items-center gap-2"><span class="w-6 font-bold text-slate-500">B</span><input type="text" id="qInputOptB" placeholder="Teks Pilihan B" class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 outline-none"></div>
           <div class="flex items-center gap-2"><span class="w-6 font-bold text-slate-500">C</span><input type="text" id="qInputOptC" placeholder="Teks Pilihan C" class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 outline-none"></div>
           <div class="flex items-center gap-2"><span class="w-6 font-bold text-slate-500">D</span><input type="text" id="qInputOptD" placeholder="Teks Pilihan D" class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 outline-none"></div>
-          <div class="flex items-center gap-2"><span class="w-6 font-bold text-slate-500">E</span><input type="text" id="qInputOptE" placeholder="Teks Pilihan E" class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 outline-none"></div>
 
           <div id="boxKeySingle" class="pt-1">
             <label class="block font-bold text-slate-700 mb-1" for="qInputCorrectSingle">Kunci Jawaban Tunggal</label>
@@ -1656,7 +2177,6 @@
               <option value="B">B</option>
               <option value="C">C</option>
               <option value="D">D</option>
-              <option value="E">E</option>
             </select>
           </div>
 
@@ -1667,7 +2187,6 @@
               <label class="inline-flex items-center gap-1 font-bold"><input type="checkbox" name="multiCorrect" value="B"> B</label>
               <label class="inline-flex items-center gap-1 font-bold"><input type="checkbox" name="multiCorrect" value="C"> C</label>
               <label class="inline-flex items-center gap-1 font-bold"><input type="checkbox" name="multiCorrect" value="D"> D</label>
-              <label class="inline-flex items-center gap-1 font-bold"><input type="checkbox" name="multiCorrect" value="E"> E</label>
             </div>
           </div>
         </div>
@@ -2028,14 +2547,17 @@
     </button>
   </div>
 
+  <!-- STACK TOAST NOTIFIKASI REAL-TIME ADMIN & GURU -->
+  <div id="cbtRealtimeToastStack" class="fixed bottom-4 right-4 z-[75] flex flex-col-reverse gap-2.5 max-w-sm w-[calc(100vw-2rem)] pointer-events-none no-print"></div>
+
   <!-- ======================== SCRIPTS ======================== -->
-  <script src="js/default-questions.js?v=3.18"></script>
+  <script src="js/default-questions.js?v=3.31"></script>
   <script src="js/default-teachers.js?v=3.18"></script>
   <script src="js/default-students.js?v=3.18"></script>
-  <script src="js/supabase-config.js?v=3.18"></script>
-  <script src="js/exam-engine.js?v=3.18"></script>
-  <script src="js/admin.js?v=3.18"></script>
-  <script src="js/app.js?v=3.18"></script>
+  <script src="js/supabase-config.js?v=3.31"></script>
+  <script src="js/exam-engine.js?v=3.31"></script>
+  <script src="js/admin.js?v=3.31"></script>
+  <script src="js/app.js?v=3.31"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

@@ -28,6 +28,18 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentLogoCbtBase64 = "";
   let monitoringRefreshTimer = null;
   let cachedMonitoringSessions = [];
+  let realtimePollTimer = null;
+  let realtimeNotifActive = false;
+  let realtimeBaselineReady = false;
+  const realtimeSessionSnapshot = new Map();
+  const realtimeEmittedEventKeys = new Set();
+  const realtimeRecentDoneAt = new Map();
+  let realtimeNotifs = [];
+  let realtimeUnreadCount = 0;
+  let realtimeFilterMode = 'ALL';
+  let realtimeSoundEnabled = localStorage.getItem('cbt_notif_sound') !== 'off';
+  let realtimeControlsInitialized = false;
+  let realtimeLastCloudResultPullAt = 0;
 
   function init() {
     renderConfigInfoOnLogin();
@@ -39,6 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupStudentNisnDetection();
     setupSubjectAndClassFilters();
     setupMonitoringControls();
+    setupRealtimeNotificationControls();
     setupDarkMode();
     setupLoginPortalControls();
     setupAdminLoginHelpers();
@@ -439,6 +452,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (labelHeader) labelHeader.innerText = isDark ? 'Mode Terang' : 'Mode Gelap';
     if (iconLogin) iconLogin.innerHTML = isDark ? sunSvg : moonSvg;
     if (labelLogin) labelLogin.innerText = isDark ? 'Terang' : 'Gelap';
+
+    if (typeof refreshVisibleD3Charts === 'function') {
+      refreshVisibleD3Charts();
+    }
   }
 
   function setupDarkMode() {
@@ -474,8 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const key = e.key.toUpperCase();
       const type = q.type || 'single';
-      const keyMap = { '1': 'A', '2': 'B', '3': 'C', '4': 'D', '5': 'E' };
-      const selectedOptionKey = ['A', 'B', 'C', 'D', 'E'].includes(key) ? key : keyMap[e.key];
+      const selectedOptionKey = ['A', 'B', 'C', 'D'].includes(key) ? key : null;
 
       if (selectedOptionKey) {
         if (type === 'single') {
@@ -778,6 +794,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (viewName !== 'admin') {
       stopMonitoringAutoRefresh();
+      stopAdminRealtimeNotifications();
     }
 
     if (viewName === 'login') {
@@ -794,6 +811,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (viewName === 'admin') {
       viewAdmin.classList.remove('hidden');
       renderAdminDashboard();
+      startAdminRealtimeNotifications();
     }
 
     updateCloudBadge();
@@ -1039,13 +1057,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCancelConfirm = document.getElementById('btnCancelConfirm');
   if (btnCancelConfirm) {
     btnCancelConfirm.addEventListener('click', () => {
-      if (tempStudent && window.supabaseSync) {
-        const sub = (tempStudent.examConfig && tempStudent.examConfig.subject) || window.examEngine.config.subject;
-        window.supabaseSync.removeStudentSession(tempStudent.nisn, sub);
-      }
-      tempStudent = null;
-      try { localStorage.removeItem('cbt_confirm_student'); } catch (e) {}
-      showView('login');
+      openLogoutConfirmModal('student_confirm', () => {
+        if (tempStudent && window.supabaseSync) {
+          const sub = (tempStudent.examConfig && tempStudent.examConfig.subject) || window.examEngine.config.subject;
+          window.supabaseSync.removeStudentSession(tempStudent.nisn, sub);
+        }
+        tempStudent = null;
+        try { localStorage.removeItem('cbt_confirm_student'); } catch (e) {}
+        showView('login');
+      });
     });
   }
 
@@ -1441,7 +1461,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const btnReturnHome = document.getElementById('btnReturnHome');
-  if (btnReturnHome) btnReturnHome.addEventListener('click', () => showView('login'));
+  if (btnReturnHome) {
+    btnReturnHome.addEventListener('click', () => {
+      openLogoutConfirmModal('student_result', () => {
+        showView('login');
+      });
+    });
+  }
 
   // ===================== PANEL PROKTOR & GURU: LOGIN SECURE =====================
   function setupAdminLoginHelpers() {
@@ -1513,16 +1539,107 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 10000);
   }
 
-  const btnAdminLogout = document.getElementById('btnAdminLogout');
-  if (btnAdminLogout) {
-    btnAdminLogout.addEventListener('click', () => {
-      stopMonitoringAutoRefresh();
-      window.cbtAdmin.logout();
-      showView('login');
+  let pendingLogoutAction = null;
+  const modalLogoutConfirm = document.getElementById('modalLogoutConfirm');
+  const btnCancelLogoutConfirm = document.getElementById('btnCancelLogoutConfirm');
+  const btnConfirmLogoutFinal = document.getElementById('btnConfirmLogoutFinal');
+
+  function openLogoutConfirmModal(mode, onConfirm) {
+    if (!modalLogoutConfirm) {
+      if (typeof onConfirm === 'function') onConfirm();
+      return;
+    }
+    pendingLogoutAction = onConfirm;
+
+    const iconBox = document.getElementById('logoutModalIconBox');
+    const subtitleEl = document.getElementById('logoutModalSubtitle');
+    const titleEl = document.getElementById('logoutModalTitle');
+    const descEl = document.getElementById('logoutModalDesc');
+
+    const exitArrowSvg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>';
+    const studentWarnSvg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>';
+    const studentDoneSvg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+
+    if (mode === 'student_confirm') {
+      if (iconBox) {
+        iconBox.className = 'w-12 h-12 rounded-2xl mx-auto flex items-center justify-center mb-2.5 bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400';
+        iconBox.innerHTML = studentWarnSvg;
+      }
+      if (subtitleEl) subtitleEl.innerText = 'Notifikasi Keluar Peserta';
+      if (titleEl) titleEl.innerText = 'Batalkan & keluar sebelum memulai ujian?';
+      if (descEl) descEl.innerText = 'Jika keluar sekarang, sesi kehadiran ujian Anda akan dibatalkan dan Anda harus login ulang serta memasukkan token kembali.';
+      if (btnCancelLogoutConfirm) btnCancelLogoutConfirm.innerText = 'Batal';
+      if (btnConfirmLogoutFinal) {
+        btnConfirmLogoutFinal.innerText = 'Ya, Keluar Sesi';
+        btnConfirmLogoutFinal.className = 'py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-amber-600 hover:bg-amber-700 shadow-md shadow-amber-600/20 transition cursor-pointer';
+      }
+    } else if (mode === 'student_result') {
+      if (iconBox) {
+        iconBox.className = 'w-12 h-12 rounded-2xl mx-auto flex items-center justify-center mb-2.5 bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400';
+        iconBox.innerHTML = studentDoneSvg;
+      }
+      if (subtitleEl) subtitleEl.innerText = 'Konfirmasi Keluar Peserta Ujian';
+      if (titleEl) titleEl.innerText = 'Keluar dari halaman bukti selesai ujian?';
+      if (descEl) descEl.innerText = 'Pastikan Anda sudah mencetak/menyimpan bukti ujian atau melapor ke pengawas. Anda tidak dapat mengulang ujian tanpa reset token dari proktor.';
+      if (btnCancelLogoutConfirm) btnCancelLogoutConfirm.innerText = 'Tetap di Sini';
+      if (btnConfirmLogoutFinal) {
+        btnConfirmLogoutFinal.innerText = 'Ya, Kembali ke Login';
+        btnConfirmLogoutFinal.className = 'py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition cursor-pointer';
+      }
+    } else {
+      // Admin & Guru
+      if (iconBox) {
+        iconBox.className = 'w-11 h-11 rounded-2xl mx-auto flex items-center justify-center mb-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200';
+        iconBox.innerHTML = exitArrowSvg;
+      }
+      if (subtitleEl) subtitleEl.innerText = 'Konfirmasi Keluar';
+      if (titleEl) titleEl.innerText = 'Apakah Anda yakin ingin keluar dari aplikasi CBT?';
+      if (descEl) descEl.innerText = 'Anda dapat login kembali kapan saja untuk mengakses aplikasi.';
+      if (btnCancelLogoutConfirm) btnCancelLogoutConfirm.innerText = 'Tidak';
+      if (btnConfirmLogoutFinal) {
+        btnConfirmLogoutFinal.innerText = 'Ya, Keluar';
+        btnConfirmLogoutFinal.className = 'py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-600/20 transition cursor-pointer';
+      }
+    }
+
+    modalLogoutConfirm.classList.remove('hidden');
+  }
+
+  function closeLogoutConfirmModal() {
+    if (modalLogoutConfirm) modalLogoutConfirm.classList.add('hidden');
+    pendingLogoutAction = null;
+  }
+
+  if (btnCancelLogoutConfirm) {
+    btnCancelLogoutConfirm.addEventListener('click', closeLogoutConfirmModal);
+  }
+  if (btnConfirmLogoutFinal) {
+    btnConfirmLogoutFinal.addEventListener('click', () => {
+      const action = pendingLogoutAction;
+      closeLogoutConfirmModal();
+      if (typeof action === 'function') action();
+    });
+  }
+  if (modalLogoutConfirm) {
+    modalLogoutConfirm.addEventListener('click', (e) => {
+      if (e.target === modalLogoutConfirm) closeLogoutConfirmModal();
     });
   }
 
-  // ===================== 7 ADMIN TABS SWITCHER & RBAC =====================
+  const btnAdminLogout = document.getElementById('btnAdminLogout');
+  if (btnAdminLogout) {
+    btnAdminLogout.addEventListener('click', () => {
+      openLogoutConfirmModal('admin', () => {
+        stopMonitoringAutoRefresh();
+        resetAdminRealtimeStateOnLogout();
+        try { localStorage.removeItem('cbt_active_admin_tab'); } catch (e) {}
+        window.cbtAdmin.logout();
+        showView('login');
+      });
+    });
+  }
+
+  // ===================== ADMIN TABS SWITCHER & RBAC =====================
   const adminTabButtons = document.querySelectorAll('.admin-tab-btn');
 
   function switchAdminTab(targetTab) {
@@ -1530,7 +1647,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
 
     if (!isAdmin && (targetTab === 'tabSchedules' || targetTab === 'tabStudents' || targetTab === 'tabTeachers' || targetTab === 'tabSettings')) {
-      targetTab = 'tabResults';
+      targetTab = 'tabDashboard';
     }
 
     try { localStorage.setItem('cbt_active_admin_tab', targetTab); } catch (e) {}
@@ -1538,44 +1655,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const allTabBtns = document.querySelectorAll('.admin-tab-btn');
     const allTabPanes = document.querySelectorAll('.admin-tab-pane');
 
-    const tabGradientStyles = {
-      tabResults: {
-        idle: 'bg-gradient-to-r from-sky-50 to-blue-100/80 text-blue-800 border-blue-200/80 dark:from-sky-950/70 dark:to-blue-900/50 dark:text-sky-200 dark:border-blue-800/60 hover:brightness-95',
-        active: 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-transparent shadow-md shadow-blue-600/25'
-      },
-      tabMonitoring: {
-        idle: 'bg-gradient-to-r from-cyan-50 to-teal-100/80 text-teal-800 border-teal-200/80 dark:from-cyan-950/70 dark:to-teal-900/50 dark:text-teal-200 dark:border-teal-800/60 hover:brightness-95',
-        active: 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white border-transparent shadow-md shadow-teal-600/25'
-      },
-      tabSchedules: {
-        idle: 'bg-gradient-to-r from-indigo-50 to-violet-100/80 text-indigo-800 border-indigo-200/80 dark:from-indigo-950/70 dark:to-violet-900/50 dark:text-indigo-200 dark:border-indigo-800/60 hover:brightness-95',
-        active: 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white border-transparent shadow-md shadow-indigo-600/25'
-      },
-      tabQuestions: {
-        idle: 'bg-gradient-to-r from-emerald-50 to-teal-100/75 text-emerald-800 border-emerald-200/80 dark:from-emerald-950/70 dark:to-teal-900/50 dark:text-emerald-200 dark:border-emerald-800/60 hover:brightness-95',
-        active: 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-transparent shadow-md shadow-emerald-600/25'
-      },
-      tabStudents: {
-        idle: 'bg-gradient-to-r from-amber-50 to-orange-100/75 text-amber-900 border-amber-200/80 dark:from-amber-950/70 dark:to-orange-900/50 dark:text-amber-200 dark:border-amber-800/60 hover:brightness-95',
-        active: 'bg-gradient-to-r from-amber-500 to-orange-600 text-white border-transparent shadow-md shadow-amber-500/25'
-      },
-      tabTeachers: {
-        idle: 'bg-gradient-to-r from-rose-50 to-pink-100/75 text-rose-800 border-rose-200/80 dark:from-rose-950/70 dark:to-pink-900/50 dark:text-rose-200 dark:border-rose-800/60 hover:brightness-95',
-        active: 'bg-gradient-to-r from-rose-600 to-pink-600 text-white border-transparent shadow-md shadow-rose-600/25'
-      },
-      tabSettings: {
-        idle: 'bg-gradient-to-r from-slate-100 to-indigo-100/80 text-slate-800 border-slate-300/80 dark:from-slate-800 dark:to-indigo-950/60 dark:text-slate-200 dark:border-slate-700 hover:brightness-95',
-        active: 'bg-gradient-to-r from-slate-700 to-indigo-700 text-white border-transparent shadow-md shadow-slate-700/25'
-      }
-    };
+    const idleTabClass = 'bg-slate-50/80 hover:bg-slate-100 text-slate-700 border-slate-200/80 dark:bg-slate-800/75 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700';
+    const activeTabClass = 'bg-gradient-to-r from-[#124196] to-[#1a56c4] text-white border-transparent shadow-md shadow-blue-900/20';
 
     allTabBtns.forEach(b => {
       const tabKey = b.getAttribute('data-tab');
-      const stylePair = tabGradientStyles[tabKey] || tabGradientStyles.tabResults;
       const isHidden = b.classList.contains('hidden');
       const isActive = tabKey === targetTab;
-      b.className = `admin-tab-btn px-3.5 py-2 rounded-xl font-bold border flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
-        isActive ? stylePair.active : stylePair.idle
+      b.className = `admin-tab-btn lg:w-full justify-start text-left px-3.5 py-2.5 lg:py-3 rounded-xl text-xs sm:text-[13px] font-bold border flex items-center gap-2 cursor-pointer transition whitespace-nowrap ${
+        isActive ? activeTabClass : idleTabClass
       }${isHidden ? ' hidden' : ''}`;
     });
 
@@ -1589,7 +1677,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      if (targetTab === 'tabResults') {
+      if (targetTab === 'tabDashboard') {
+        renderAdminOverviewDashboard();
+      } else if (targetTab === 'tabResults') {
         renderAdminAnalyticsAndResults();
       } else if (targetTab === 'tabMonitoring') {
         setupMonitoringControls();
@@ -1600,6 +1690,15 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (targetTab === 'tabQuestions') {
         setupQuestionBankFilters();
         renderAdminQuestionList();
+        const tpPanel = document.getElementById('adminTeacherQuestionProgressPanel');
+        if (tpPanel) {
+          if (isAdmin) {
+            tpPanel.classList.remove('hidden');
+            renderAdminTeacherQuestionProgress();
+          } else {
+            tpPanel.classList.add('hidden');
+          }
+        }
       } else if (targetTab === 'tabStudents' && isAdmin) {
         renderAdminStudentsList(document.getElementById('searchStudentInput')?.value || '');
       } else if (targetTab === 'tabTeachers' && isAdmin) {
@@ -1640,19 +1739,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const nameDisp = document.getElementById('adminTeacherNameDisplay');
       const roleBadge = document.getElementById('adminRoleBadge');
       const subjDisp = document.getElementById('adminSubjectDisplay');
-      if (nameDisp) nameDisp.innerText = `Panel: ${currentTeacher.name}`;
+      if (nameDisp) {
+        nameDisp.innerText = isAdmin
+          ? 'Selamat Datang, Admin!'
+          : `Hallo, ${currentTeacher.name}! 👋`;
+      }
       if (roleBadge) {
-        roleBadge.innerText = isAdmin ? 'Proktor Utama / Admin' : 'Guru Mata Pelajaran';
-        roleBadge.className = isAdmin
-          ? 'px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-700 border border-purple-200'
-          : 'px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-700 border border-blue-200';
+        roleBadge.className = 'hidden';
       }
       if (subjDisp) {
         const parsedClasses = currentTeacher.classes && window.cbtAdmin ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes) : [];
         const classInfo = parsedClasses.length > 0 ? ` • Kelas: ${parsedClasses.join(', ')}` : '';
         subjDisp.innerText = isAdmin
-          ? `Status: Hak Akses Penuh (Administrator Sistem)`
-          : `Mata Pelajaran: ${currentTeacher.subject}${classInfo} • NIP: ${currentTeacher.nip}`;
+          ? 'Administrator Sistem'
+          : `Guru Mata Pelajaran • ${currentTeacher.subject}${classInfo}`;
       }
 
       if (tabMonitoringBtn) tabMonitoringBtn.classList.remove('hidden');
@@ -1666,14 +1766,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tabStudentsPane) tabStudentsPane.classList.add('hidden');
         if (tabTeachersPane) tabTeachersPane.classList.add('hidden');
         if (tabSettingsPane) tabSettingsPane.classList.add('hidden');
-        const savedTab = localStorage.getItem('cbt_active_admin_tab') || 'tabResults';
-        const allowedGuruTabs = ['tabResults', 'tabMonitoring', 'tabQuestions'];
-        switchAdminTab(allowedGuruTabs.includes(savedTab) ? savedTab : 'tabResults');
+        const savedTab = localStorage.getItem('cbt_active_admin_tab') || 'tabDashboard';
+        const allowedGuruTabs = ['tabDashboard', 'tabResults', 'tabMonitoring', 'tabQuestions'];
+        switchAdminTab(allowedGuruTabs.includes(savedTab) ? savedTab : 'tabDashboard');
       } else {
         if (tabSchedulesBtn) tabSchedulesBtn.classList.remove('hidden');
         if (tabStudentsBtn) tabStudentsBtn.classList.remove('hidden');
         if (tabTeachersBtn) tabTeachersBtn.classList.remove('hidden');
         if (tabSettingsBtn) tabSettingsBtn.classList.remove('hidden');
+        const savedTab = localStorage.getItem('cbt_active_admin_tab') || 'tabDashboard';
+        const allowedAdminTabs = ['tabDashboard', 'tabResults', 'tabMonitoring', 'tabSchedules', 'tabQuestions', 'tabStudents', 'tabTeachers', 'tabSettings'];
+        switchAdminTab(allowedAdminTabs.includes(savedTab) ? savedTab : 'tabDashboard');
       }
     }
     const btnResetQs = document.getElementById('btnResetDefaultQuestions');
@@ -1682,19 +1785,451 @@ document.addEventListener('DOMContentLoaded', () => {
       else btnResetQs.classList.add('hidden');
     }
 
+    const tpPanel = document.getElementById('adminTeacherQuestionProgressPanel');
+    if (tpPanel) {
+      if (isAdmin) tpPanel.classList.remove('hidden');
+      else tpPanel.classList.add('hidden');
+    }
+
+    const consultStuSel = document.getElementById('filterResultsStudent');
+    if (consultStuSel) consultStuSel.value = 'ALL';
+
     setupSubjectAndClassFilters();
     setupQuestionBankFilters();
     setupMonitoringControls();
+    renderAdminOverviewDashboard();
     renderAdminAnalyticsAndResults();
     renderAdminQuestionList();
 
     if (isAdmin) {
+      renderAdminTeacherQuestionProgress();
       renderAdminSchedulesList();
       renderAdminStudentsList();
       renderAdminTeachersList();
       renderAdminConfigForm();
       renderSchoolConfigForm();
       renderSupabaseConfigForm();
+    }
+  }
+
+  // ===================== D3.JS VISUALIZATION HELPERS & TAB DASHBOARD =====================
+  let lastEmpiricalAnalysisCache = null;
+  let lastDashboardResultsCache = [];
+
+  function ensureD3Tooltip() {
+    let tip = document.getElementById('cbtD3Tooltip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'cbtD3Tooltip';
+      tip.className = 'hidden fixed z-[80] pointer-events-none max-w-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm px-3 py-2 text-[11px] text-slate-800 dark:text-slate-100 shadow-xl transition-opacity duration-75';
+      document.body.appendChild(tip);
+    }
+    return tip;
+  }
+
+  function showD3Tooltip(event, htmlContent) {
+    const tip = ensureD3Tooltip();
+    tip.innerHTML = htmlContent;
+    tip.classList.remove('hidden');
+    const pad = 14;
+    const rect = tip.getBoundingClientRect();
+    let left = (event.clientX || 0) + pad;
+    let top = (event.clientY || 0) + pad;
+    if (left + rect.width > window.innerWidth - 10) {
+      left = Math.max(10, (event.clientX || 0) - rect.width - pad);
+    }
+    if (top + rect.height > window.innerHeight - 10) {
+      top = Math.max(10, (event.clientY || 0) - rect.height - pad);
+    }
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+
+  function hideD3Tooltip() {
+    const tip = document.getElementById('cbtD3Tooltip');
+    if (tip) tip.classList.add('hidden');
+  }
+
+  function getD3ThemeColors() {
+    const isDark = document.documentElement.classList.contains('dark');
+    return {
+      isDark,
+      axisText: isDark ? '#94a3b8' : '#475569',
+      axisLine: isDark ? '#475569' : '#94a3b8',
+      gridLine: isDark ? '#334155' : '#e2e8f0',
+      idealBg: isDark ? 'rgba(16, 185, 129, 0.14)' : 'rgba(16, 185, 129, 0.10)',
+      idealStroke: isDark ? '#34d399' : '#10b981',
+      labelBg: isDark ? '#0f172a' : '#ffffff'
+    };
+  }
+
+  function renderDashboardScoreDistChart(results = []) {
+    const container = document.getElementById('dashboardScoreDistChart');
+    if (!container) return;
+    lastDashboardResultsCache = Array.isArray(results) ? results : [];
+
+    if (!lastDashboardResultsCache.length) {
+      container.innerHTML = `
+        <div class="text-center py-10 px-4 text-slate-400 text-xs">
+          <p class="font-bold text-slate-600 dark:text-slate-300">Belum ada data nilai ujian masuk</p>
+          <p class="mt-1">Grafik distribusi nilai D3.js akan muncul otomatis setelah siswa menyelesaikan ujian atau setelah Sinkron Cloud.</p>
+        </div>
+      `;
+      return;
+    }
+
+    if (typeof d3 === 'undefined') {
+      container.innerHTML = `<div class="text-xs text-slate-500 p-4">Library visualisasi D3.js sedang dimuat...</div>`;
+      return;
+    }
+
+    const brackets = [
+      { label: '< 50', desc: 'Perlu Bimbingan', min: -Infinity, max: 49.999, color: '#e11d48' },
+      { label: '50–64', desc: 'Cukup', min: 50, max: 64.999, color: '#f97316' },
+      { label: '65–74', desc: 'Hampir Tuntas', min: 65, max: 74.999, color: '#f59e0b' },
+      { label: '75–84', desc: 'Tuntas (Baik)', min: 75, max: 84.999, color: '#2563eb' },
+      { label: '85–100', desc: 'Sangat Baik', min: 85, max: Infinity, color: '#10b981' }
+    ];
+
+    const total = lastDashboardResultsCache.length;
+    const data = brackets.map(b => {
+      const count = lastDashboardResultsCache.filter(r => {
+        const s = Number(r.finalScore || 0);
+        return s >= b.min && s <= b.max;
+      }).length;
+      return {
+        ...b,
+        count,
+        pct: total > 0 ? Math.round((count / total) * 100) : 0
+      };
+    });
+
+    const theme = getD3ThemeColors();
+    const width = Math.max(container.clientWidth || 0, 480);
+    const height = 250;
+    const margin = { top: 24, right: 16, bottom: 42, left: 38 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    container.innerHTML = '';
+    const svg = d3.select(container)
+      .append('svg')
+      .attr('viewBox', `0 0 ${width} ${height}`)
+      .attr('class', 'w-full h-auto overflow-visible');
+
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const x = d3.scaleBand()
+      .domain(data.map(d => d.label))
+      .range([0, innerW])
+      .padding(0.32);
+
+    const maxCount = Math.max(1, d3.max(data, d => d.count) || 1);
+    const y = d3.scaleLinear()
+      .domain([0, maxCount])
+      .nice()
+      .range([innerH, 0]);
+
+    // Grid horizontal
+    g.append('g')
+      .call(d3.axisLeft(y).ticks(4).tickSize(-innerW).tickFormat(''))
+      .selectAll('line')
+      .attr('stroke', theme.gridLine)
+      .attr('stroke-dasharray', '3,3');
+    g.select('.domain').remove();
+
+    // Sumbu Y
+    g.append('g')
+      .call(d3.axisLeft(y).ticks(4).tickFormat(d3.format('d')))
+      .call(ax => ax.select('.domain').attr('stroke', theme.axisLine))
+      .selectAll('text')
+      .attr('fill', theme.axisText)
+      .style('font-size', '11px')
+      .style('font-weight', '600');
+
+    // Sumbu X
+    g.append('g')
+      .attr('transform', `translate(0,${innerH})`)
+      .call(d3.axisBottom(x))
+      .call(ax => ax.select('.domain').attr('stroke', theme.axisLine))
+      .selectAll('text')
+      .attr('fill', theme.axisText)
+      .style('font-size', '11px')
+      .style('font-weight', '700');
+
+    // Garis batas KKM 75 (di antara 65-74 dan 75-84)
+    const xBeforePass = x('75–84');
+    if (xBeforePass !== undefined) {
+      const kkmX = xBeforePass - (x.step() - x.bandwidth()) / 2;
+      g.append('line')
+        .attr('x1', kkmX)
+        .attr('x2', kkmX)
+        .attr('y1', 0)
+        .attr('y2', innerH)
+        .attr('stroke', theme.idealStroke)
+        .attr('stroke-width', 1.5)
+        .attr('stroke-dasharray', '4,3');
+
+      g.append('text')
+        .attr('x', kkmX + 4)
+        .attr('y', 10)
+        .attr('fill', theme.idealStroke)
+        .style('font-size', '10px')
+        .style('font-weight', '700')
+        .text('Batas Tuntas ≥75 →');
+    }
+
+    // Batang nilai
+    const bars = g.selectAll('.dash-bar')
+      .data(data)
+      .enter()
+      .append('rect')
+      .attr('class', 'dash-bar cursor-pointer')
+      .attr('x', d => x(d.label))
+      .attr('width', x.bandwidth())
+      .attr('y', innerH)
+      .attr('height', 0)
+      .attr('rx', 6)
+      .attr('fill', d => d.color)
+      .attr('opacity', 0.9);
+
+    bars.transition()
+      .duration(350)
+      .attr('y', d => y(d.count))
+      .attr('height', d => Math.max(0, innerH - y(d.count)));
+
+    bars
+      .on('mouseenter mousemove', (event, d) => {
+        d3.select(event.currentTarget).attr('opacity', 1);
+        showD3Tooltip(event, `
+          <div class="font-extrabold text-slate-900 dark:text-white">Rentang Nilai ${escapeHtmlSafe(d.label)}</div>
+          <div class="text-slate-500 dark:text-slate-400 mb-1">${escapeHtmlSafe(d.desc)}</div>
+          <div>Jumlah: <strong>${d.count} siswa</strong> (${d.pct}%)</div>
+        `);
+      })
+      .on('mouseleave', (event) => {
+        d3.select(event.currentTarget).attr('opacity', 0.9);
+        hideD3Tooltip();
+      });
+
+    // Label jumlah di atas batang
+    g.selectAll('.dash-bar-label')
+      .data(data)
+      .enter()
+      .append('text')
+      .attr('x', d => x(d.label) + x.bandwidth() / 2)
+      .attr('y', d => y(d.count) - 6)
+      .attr('text-anchor', 'middle')
+      .attr('fill', theme.axisText)
+      .style('font-size', '10px')
+      .style('font-weight', '700')
+      .text(d => d.count > 0 ? `${d.count} (${d.pct}%)` : '0');
+  }
+
+  function renderAdminOverviewDashboard() {
+    if (!window.cbtAdmin) return;
+    const currentTeacher = window.cbtAdmin.getCurrentTeacher();
+    const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
+
+    const subtitleEl = document.getElementById('dashOverviewSubtitle');
+    if (subtitleEl && currentTeacher) {
+      subtitleEl.innerText = isAdmin
+        ? 'Cakupan Administrator Sekolah — Pantau kesiapan soal, peserta, jadwal aktif, dan sebaran nilai semua mata pelajaran.'
+        : `Cakupan Guru Mapel (${currentTeacher.subject || '-'}) — Pantau kesiapan soal dan capaian nilai peserta pada kelas ampuan Anda.`;
+    }
+
+    // 1. Bank Soal & Audit Pra-Ujian
+    const scopedQuestions = window.cbtAdmin.getQuestionsFiltered('ALL', 'ALL');
+    const preAudit = typeof window.cbtAdmin.auditQuestionsPreExam === 'function'
+      ? window.cbtAdmin.auditQuestionsPreExam(scopedQuestions)
+      : { items: [], summary: { totalQuestions: scopedQuestions.length, readyCount: 0, warningCount: 0, errorCount: 0, readyPercent: 0 } };
+    const qSum = preAudit.summary;
+
+    const dashQ = document.getElementById('dashKpiQuestions');
+    const dashQSub = document.getElementById('dashKpiQuestionsSub');
+    if (dashQ) dashQ.innerText = `${qSum.totalQuestions} Soal`;
+    if (dashQSub) dashQSub.innerText = `${qSum.readyCount} siap (${qSum.readyPercent}% lolos pra-ujian)`;
+
+    // 2. Data Siswa (sesuai kelas ampuan jika Guru Mapel)
+    let allStudents = window.studentManager ? window.studentManager.getAllStudents() : [];
+    const teacherClasses = (!isAdmin && currentTeacher && currentTeacher.classes)
+      ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes)
+      : [];
+    if (teacherClasses.length > 0) {
+      allStudents = allStudents.filter(st => {
+        const cls = String(st.class || '').trim().toUpperCase();
+        return teacherClasses.some(tc => cls === tc || cls.startsWith(tc));
+      });
+    }
+    const uniqueClasses = new Set(allStudents.map(s => String(s.class || '').trim()).filter(Boolean));
+    const dashStu = document.getElementById('dashKpiStudents');
+    const dashStuSub = document.getElementById('dashKpiStudentsSub');
+    if (dashStu) dashStu.innerText = `${allStudents.length} Siswa`;
+    if (dashStuSub) dashStuSub.innerText = `${uniqueClasses.size} kelas terdaftar`;
+
+    // 3. Hasil Ujian & Aktivitas Live
+    const scopedResults = window.cbtAdmin.getAllResultsSorted('ALL', 'ALL');
+    const analytics = window.cbtAdmin.getExamAnalytics('ALL', 'ALL');
+
+    let liveSessions = window.supabaseSync && typeof window.supabaseSync.getLocalStudentSessions === 'function'
+      ? window.supabaseSync.getLocalStudentSessions()
+      : [];
+    if (!isAdmin && currentTeacher) {
+      const tSubs = window.cbtAdmin.getTeacherSubjectsList(currentTeacher).map(s => s.toLowerCase());
+      liveSessions = liveSessions.filter(sess => {
+        const subOk = tSubs.length > 0 && tSubs.some(ts => window.examEngine.matchesSubject(sess.subject, ts));
+        const cls = String(sess.class_name || '').trim().toUpperCase();
+        const clsOk = teacherClasses.length === 0 || teacherClasses.some(tc => cls === tc || cls.startsWith(tc));
+        return subOk && clsOk;
+      });
+    }
+    const activeLiveCount = liveSessions.filter(s => s.status === 'in_progress').length;
+
+    const dashResCount = document.getElementById('dashKpiResultsCount');
+    const dashResSub = document.getElementById('dashKpiResultsSub');
+    if (dashResCount) dashResCount.innerText = `${scopedResults.length} Hasil`;
+    if (dashResSub) dashResSub.innerText = `${activeLiveCount} siswa sedang ujian live`;
+
+    // 4. Rata-rata & Ketuntasan
+    const dashAvg = document.getElementById('dashKpiAvgScore');
+    const dashPass = document.getElementById('dashKpiPassRate');
+    if (dashAvg) dashAvg.innerText = String(analytics.averageScore ?? 0);
+    if (dashPass) dashPass.innerText = `Ketuntasan (≥75): ${analytics.passRatePercentage ?? 0}%`;
+
+    const distHigh = document.getElementById('dashDistHighest');
+    const distLow = document.getElementById('dashDistLowest');
+    const distPass = document.getElementById('dashDistPassCount');
+    const passedTotal = scopedResults.filter(r => Number(r.finalScore || 0) >= 75).length;
+    if (distHigh) distHigh.innerText = scopedResults.length > 0 ? `${analytics.highestScore}` : '-';
+    if (distLow) distLow.innerText = scopedResults.length > 0 ? `${analytics.lowestScore}` : '-';
+    if (distPass) distPass.innerText = `${passedTotal} dari ${scopedResults.length}`;
+
+    // Render Grafik Distribusi Nilai D3.js
+    renderDashboardScoreDistChart(scopedResults);
+
+    // 5. Box Kesiapan Pra-Ujian
+    const readinessBox = document.getElementById('dashboardReadinessBox');
+    if (readinessBox) {
+      const totalQ = Math.max(1, qSum.totalQuestions);
+      const readyPct = qSum.totalQuestions > 0 ? Math.round((qSum.readyCount / totalQ) * 100) : 0;
+      const warnPct = qSum.totalQuestions > 0 ? Math.round((qSum.warningCount / totalQ) * 100) : 0;
+      const errPct = qSum.totalQuestions > 0 ? Math.max(0, 100 - readyPct - warnPct) : 0;
+
+      readinessBox.innerHTML = qSum.totalQuestions === 0
+        ? `<div class="text-xs text-slate-400 py-3 text-center">Belum ada butir soal pada cakupan ini.</div>`
+        : `
+          <div class="w-full h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+            <div class="bg-emerald-500 h-full transition-all" style="width:${readyPct}%" title="Siap: ${qSum.readyCount}"></div>
+            <div class="bg-amber-400 h-full transition-all" style="width:${warnPct}%" title="Perlu Dicek: ${qSum.warningCount}"></div>
+            <div class="bg-rose-500 h-full transition-all" style="width:${errPct}%" title="Perlu Perbaikan: ${qSum.errorCount}"></div>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-center text-xs">
+            <div class="p-2 rounded-xl bg-emerald-50 border border-emerald-200">
+              <div class="text-sm font-black text-emerald-700">${qSum.readyCount}</div>
+              <div class="text-[10px] font-bold text-emerald-800">Siap Diujikan</div>
+            </div>
+            <div class="p-2 rounded-xl bg-amber-50 border border-amber-200">
+              <div class="text-sm font-black text-amber-700">${qSum.warningCount}</div>
+              <div class="text-[10px] font-bold text-amber-800">Perlu Dicek</div>
+            </div>
+            <div class="p-2 rounded-xl bg-rose-50 border border-rose-200">
+              <div class="text-sm font-black text-rose-700">${qSum.errorCount}</div>
+              <div class="text-[10px] font-bold text-rose-800">Perbaikan</div>
+            </div>
+          </div>
+        `;
+    }
+
+    // 6. Jadwal Aktif & Token
+    const btnOpenSchedules = document.getElementById('btnDashOpenSchedules');
+    if (btnOpenSchedules) {
+      if (isAdmin) btnOpenSchedules.classList.remove('hidden');
+      else btnOpenSchedules.classList.add('hidden');
+    }
+    const schedListEl = document.getElementById('dashboardActiveSchedulesList');
+    if (schedListEl) {
+      let activeSchedules = window.cbtAdmin.getActiveSchedules();
+      if (!isAdmin && currentTeacher) {
+        const tSubs = window.cbtAdmin.getTeacherSubjectsList(currentTeacher).map(s => s.toLowerCase());
+        if (tSubs.length > 0) {
+          activeSchedules = activeSchedules.filter(sch => tSubs.some(ts => String(sch.subject || '').toLowerCase().includes(ts)));
+        }
+      }
+      if (activeSchedules.length === 0) {
+        schedListEl.innerHTML = `
+          <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 text-xs text-slate-500 text-center">
+            Belum ada jadwal mapel berstatus <strong>Aktif</strong> saat ini.
+          </div>
+        `;
+      } else {
+        schedListEl.innerHTML = activeSchedules.slice(0, 4).map(sch => `
+          <div class="p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 flex items-center justify-between gap-2 text-xs">
+            <div class="min-w-0">
+              <div class="font-bold text-slate-800 dark:text-slate-100 truncate">${escapeHtmlSafe(sch.subject || '-')}</div>
+              <div class="text-[10px] text-slate-500 truncate">${escapeHtmlSafe(sch.day || '')} ${escapeHtmlSafe(sch.date || '')} • ${escapeHtmlSafe(sch.time || '')} (${sch.durationMinutes || 80} mnt)</div>
+            </div>
+            <span class="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 font-mono font-black text-[11px] shrink-0" title="Token Ujian">
+              ${escapeHtmlSafe(sch.token || '-')}
+            </span>
+          </div>
+        `).join('') + (activeSchedules.length > 4 ? `<p class="text-[10px] text-slate-400 text-right font-semibold">+ ${activeSchedules.length - 4} jadwal aktif lainnya</p>` : '');
+      }
+    }
+
+    // 7. Ringkasan 5 Nilai Terbaru / Teratas
+    const recentEl = document.getElementById('dashboardRecentResultsList');
+    if (recentEl) {
+      if (scopedResults.length === 0) {
+        recentEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-4">Belum ada peserta yang menyelesaikan ujian.</p>`;
+      } else {
+        const topSlice = scopedResults.slice(0, 5);
+        recentEl.innerHTML = `
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-200 text-slate-500 text-[10px] uppercase font-bold">
+                <th class="py-2 px-2.5 text-center w-10">#</th>
+                <th class="py-2 px-2.5">Nama Siswa</th>
+                <th class="py-2 px-2.5">Kelas</th>
+                <th class="py-2 px-2.5">Mata Pelajaran</th>
+                <th class="py-2 px-2.5 text-center">B / S / K</th>
+                <th class="py-2 px-2.5 text-center">Nilai</th>
+                <th class="py-2 px-2.5">Waktu Selesai</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${topSlice.map((r, i) => `
+                <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+                  <td class="py-2 px-2.5 text-center font-bold text-slate-500">${i + 1}</td>
+                  <td class="py-2 px-2.5 font-bold text-slate-800 dark:text-slate-100">${escapeHtmlSafe(r.student?.name || '-')}</td>
+                  <td class="py-2 px-2.5"><span class="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-[11px]">${escapeHtmlSafe(r.student?.class ? 'Kelas ' + r.student.class : '-')}</span></td>
+                  <td class="py-2 px-2.5 text-slate-600 dark:text-slate-300 font-medium">${escapeHtmlSafe(r.subject || '-')}</td>
+                  <td class="py-2 px-2.5 text-center font-bold whitespace-nowrap">
+                    <span class="text-emerald-600">✓${r.correctCount || 0}</span>
+                    <span class="text-red-500 ml-1">✗${r.incorrectCount || 0}</span>
+                    <span class="text-slate-400 ml-1">?${r.unattemptedCount || 0}</span>
+                  </td>
+                  <td class="py-2 px-2.5 text-center">
+                    <span class="inline-flex px-2 py-0.5 rounded-md font-black text-[11px] ${Number(r.finalScore || 0) >= 75 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">${r.finalScore ?? 0}</span>
+                  </td>
+                  <td class="py-2 px-2.5 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtmlSafe(r.completedAt || '-')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+    }
+  }
+
+  function refreshVisibleD3Charts() {
+    const dashPane = document.getElementById('tabDashboard');
+    if (viewAdmin && !viewAdmin.classList.contains('hidden') && dashPane && !dashPane.classList.contains('hidden')) {
+      renderDashboardScoreDistChart(lastDashboardResultsCache);
+    }
+    const empSec = document.getElementById('empiricalAnalysisSection');
+    const panel = document.getElementById('itemAnalysisPanel');
+    if (panel && !panel.classList.contains('hidden') && empSec && !empSec.classList.contains('hidden') && lastEmpiricalAnalysisCache) {
+      renderItemAnalysisD3Charts(lastEmpiricalAnalysisCache.analysis, lastEmpiricalAnalysisCache.qualityFilter);
     }
   }
 
@@ -1966,6 +2501,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ===================== FILTER MAPEL & KELAS =====================
+  let selectedConsultAttemptIdx = 0;
+
+  function getStudentConsultKey(resultRecord) {
+    const nisn = String(resultRecord?.student?.nisn || '').trim();
+    const name = String(resultRecord?.student?.name || '').trim();
+    return nisn ? `NISN:${nisn}` : `NAME:${name.toLowerCase()}`;
+  }
+
   function setupSubjectAndClassFilters() {
     const subjSelect = document.getElementById('filterResultsSubject');
     const classSelect = document.getElementById('filterResultsClass');
@@ -1973,21 +2516,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const currentTeacher = window.cbtAdmin.getCurrentTeacher();
     const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
+    const teacherSubjects = window.cbtAdmin.getTeacherSubjectsList(currentTeacher);
     const assignedClasses = (!isAdmin && currentTeacher && currentTeacher.classes)
       ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes)
       : [];
 
     const allSubjects = window.cbtAdmin.getAllSubjects();
-    subjSelect.innerHTML = isAdmin
-      ? '<option value="ALL">Semua Mata Pelajaran</option>'
-      : `<option value="ALL">Mapel Diampu (${currentTeacher?.subject || 'Semua'})</option>`;
-    allSubjects.forEach(s => {
+    const ownedSubjects = isAdmin ? allSubjects : teacherSubjects;
+
+    subjSelect.innerHTML = '';
+    if (isAdmin) {
+      const optAll = document.createElement('option');
+      optAll.value = 'ALL';
+      optAll.innerText = 'Semua Mata Pelajaran';
+      subjSelect.appendChild(optAll);
+    } else if (ownedSubjects.length > 1) {
+      const optOwned = document.createElement('option');
+      optOwned.value = 'ALL';
+      optOwned.innerText = `Mapel Diampu (${ownedSubjects.join(' / ')})`;
+      subjSelect.appendChild(optOwned);
+    } else if (ownedSubjects.length === 0) {
+      const optEmpty = document.createElement('option');
+      optEmpty.value = 'ALL';
+      optEmpty.innerText = 'Belum Ada Mapel Diampu';
+      subjSelect.appendChild(optEmpty);
+    }
+
+    ownedSubjects.forEach(s => {
       const opt = document.createElement('option');
       opt.value = s;
       opt.innerText = s;
-      if (window.cbtAdmin.selectedSubjectFilter === s) opt.selected = true;
       subjSelect.appendChild(opt);
     });
+
+    const allowedVals = Array.from(subjSelect.options).map(o => o.value);
+    if (window.cbtAdmin.selectedSubjectFilter && allowedVals.includes(window.cbtAdmin.selectedSubjectFilter)) {
+      subjSelect.value = window.cbtAdmin.selectedSubjectFilter;
+    } else if (!isAdmin && ownedSubjects.length === 1) {
+      subjSelect.value = ownedSubjects[0];
+    } else if (subjSelect.options.length > 0) {
+      subjSelect.selectedIndex = 0;
+    }
+    window.cbtAdmin.setSubjectFilter(subjSelect.value || 'ALL');
 
     const studentClasses = window.studentManager ? window.studentManager.getAllClasses() : [];
     const classesToShow = assignedClasses.length > 0
@@ -2001,25 +2571,191 @@ document.addEventListener('DOMContentLoaded', () => {
       const opt = document.createElement('option');
       opt.value = c;
       opt.innerText = `Kelas ${c}`;
-      if (window.cbtAdmin.selectedClassFilter === c) opt.selected = true;
       classSelect.appendChild(opt);
     });
+    const allowedClasses = Array.from(classSelect.options).map(o => o.value);
+    if (window.cbtAdmin.selectedClassFilter && allowedClasses.includes(window.cbtAdmin.selectedClassFilter)) {
+      classSelect.value = window.cbtAdmin.selectedClassFilter;
+    } else {
+      classSelect.value = 'ALL';
+    }
+    window.cbtAdmin.setClassFilter(classSelect.value || 'ALL');
 
     subjSelect.onchange = (e) => {
       window.cbtAdmin.setSubjectFilter(e.target.value);
+      selectedConsultAttemptIdx = 0;
       renderAdminAnalyticsAndResults();
     };
 
     classSelect.onchange = (e) => {
       window.cbtAdmin.setClassFilter(e.target.value);
+      selectedConsultAttemptIdx = 0;
       renderAdminAnalyticsAndResults();
     };
+
+    const searchResultsInput = document.getElementById('searchResultsInput');
+    if (searchResultsInput) {
+      searchResultsInput.oninput = () => renderAdminAnalyticsAndResults();
+    }
+
+    const filterResultsStudent = document.getElementById('filterResultsStudent');
+    if (filterResultsStudent) {
+      filterResultsStudent.onchange = () => {
+        selectedConsultAttemptIdx = 0;
+        renderAdminAnalyticsAndResults();
+      };
+    }
+
+    const btnResetConsult = document.getElementById('btnResetConsultStudent');
+    if (btnResetConsult) {
+      btnResetConsult.onclick = () => {
+        const stuSel = document.getElementById('filterResultsStudent');
+        if (stuSel) stuSel.value = 'ALL';
+        selectedConsultAttemptIdx = 0;
+        renderAdminAnalyticsAndResults();
+      };
+    }
+  }
+
+  function renderStudentConsultationPanel(sortedResults = []) {
+    const panel = document.getElementById('studentConsultationPanel');
+    const stuSel = document.getElementById('filterResultsStudent');
+    if (!panel || !stuSel || !window.cbtAdmin) return;
+
+    const prevKey = stuSel.value || 'ALL';
+    const studentMap = new Map();
+    sortedResults.forEach(r => {
+      const key = getStudentConsultKey(r);
+      if (!studentMap.has(key)) {
+        studentMap.set(key, {
+          key,
+          name: r.student?.name || '-',
+          nisn: r.student?.nisn || '-',
+          cls: r.student?.class || '-',
+          attempts: []
+        });
+      }
+      studentMap.get(key).attempts.push(r);
+    });
+
+    const uniqueStudents = Array.from(studentMap.values())
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'id'));
+
+    stuSel.innerHTML = '<option value="ALL">👤 Konsultasi 1 Siswa (Semua)</option>';
+    uniqueStudents.forEach(st => {
+      const opt = document.createElement('option');
+      opt.value = st.key;
+      const clsTxt = st.cls && st.cls !== '-' ? ` • ${st.cls}` : '';
+      const countTxt = st.attempts.length > 1 ? ` (${st.attempts.length}x)` : '';
+      opt.innerText = `${st.name} (${st.nisn}${clsTxt})${countTxt}`;
+      stuSel.appendChild(opt);
+    });
+
+    const selectedKey = studentMap.has(prevKey) ? prevKey : 'ALL';
+    stuSel.value = selectedKey;
+
+    if (selectedKey === 'ALL') {
+      panel.classList.add('hidden');
+      return;
+    }
+
+    const studentGroup = studentMap.get(selectedKey);
+    const attempts = studentGroup ? studentGroup.attempts : [];
+    if (attempts.length === 0) {
+      panel.classList.add('hidden');
+      return;
+    }
+
+    panel.classList.remove('hidden');
+    if (selectedConsultAttemptIdx >= attempts.length) selectedConsultAttemptIdx = 0;
+    const activeRecord = attempts[selectedConsultAttemptIdx] || attempts[0];
+
+    const attemptSelect = document.getElementById('consultAttemptSelect');
+    if (attemptSelect) {
+      if (attempts.length > 1) {
+        attemptSelect.classList.remove('hidden');
+        attemptSelect.innerHTML = '';
+        attempts.forEach((att, idx) => {
+          const opt = document.createElement('option');
+          opt.value = String(idx);
+          opt.innerText = `Riwayat #${idx + 1}: ${att.subject || '-'} • Nilai ${att.finalScore ?? 0} (${att.completedAt || '-'})`;
+          attemptSelect.appendChild(opt);
+        });
+        attemptSelect.value = String(selectedConsultAttemptIdx);
+        attemptSelect.onchange = (e) => {
+          selectedConsultAttemptIdx = parseInt(e.target.value, 10) || 0;
+          renderStudentConsultationPanel(sortedResults);
+        };
+      } else {
+        attemptSelect.classList.add('hidden');
+      }
+    }
+
+    const titleEl = document.getElementById('consultStudentTitle');
+    const metaEl = document.getElementById('consultStudentMeta');
+    if (titleEl) titleEl.innerText = `${activeRecord.student?.name || '-'} (${activeRecord.student?.nisn || '-'})`;
+    if (metaEl) {
+      const clsDisplay = activeRecord.student?.class ? `Kelas ${activeRecord.student.class}` : 'Kelas -';
+      metaEl.innerText = `${clsDisplay} • Mapel: ${activeRecord.subject || '-'} • Selesai: ${activeRecord.completedAt || '-'}`;
+    }
+
+    const setTxt = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = String(val);
+    };
+    setTxt('consultScoreVal', activeRecord.finalScore ?? 0);
+    setTxt('consultCorrectVal', activeRecord.correctCount ?? 0);
+    setTxt('consultWrongVal', activeRecord.incorrectCount ?? 0);
+    setTxt('consultEmptyVal', activeRecord.unattemptedCount ?? 0);
+    const cheats = Number(activeRecord.cheatCount || 0);
+    setTxt('consultCheatVal', cheats > 0 ? `${cheats}x Pelanggaran` : 'Tertib (0)');
+
+    const tbody = document.getElementById('consultBreakdownTbody');
+    if (!tbody) return;
+    const items = window.cbtAdmin.getAnswerBreakdownItems(activeRecord);
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-400">Rincian jawaban per nomor tidak tersedia pada riwayat ini.</td></tr>`;
+      return;
+    }
+
+    const bankQuestions = (window.examEngine && Array.isArray(window.examEngine.questions))
+      ? window.examEngine.questions
+      : [];
+    const byId = new Map(bankQuestions.map(q => [String(q.id), q]));
+
+    tbody.innerHTML = items.map(it => {
+      const matchedQ = (it.id !== undefined && it.id !== null) ? byId.get(String(it.id)) : null;
+      const snippet = matchedQ && matchedQ.question
+        ? escapeHtmlSafe(String(matchedQ.question).replace(/\s+/g, ' ').slice(0, 140)) + (String(matchedQ.question).length > 140 ? '…' : '')
+        : `<span class="text-slate-400 italic">Butir Soal Nomor ${it.num}</span>`;
+
+      let badgeHtml = `<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px]">Kosong</span>`;
+      if (it.status === 'correct') {
+        badgeHtml = `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[10px]">✓ Benar</span>`;
+      } else if (it.status === 'wrong') {
+        badgeHtml = `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-bold text-[10px]">✗ Salah</span>`;
+      }
+
+      return `
+        <tr class="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/70">
+          <td class="p-2.5 text-center font-black text-slate-600">${it.num}</td>
+          <td class="p-2.5 text-slate-700 dark:text-slate-200 leading-snug">${snippet}</td>
+          <td class="p-2.5 text-center font-mono font-bold text-slate-800">${escapeHtmlSafe(it.studentVal || '-')}</td>
+          <td class="p-2.5 text-center font-mono font-bold text-blue-700">${escapeHtmlSafe(it.correctVal || '-')}</td>
+          <td class="p-2.5 text-center">${badgeHtml}</td>
+        </tr>
+      `;
+    }).join('');
   }
 
   // ===================== TAB 1: REKAP NILAI & EVALUASI JAWABAN PER NOMOR =====================
   function renderAdminAnalyticsAndResults() {
     const analytics = window.cbtAdmin.getExamAnalytics();
     const sortedResults = window.cbtAdmin.getAllResultsSorted();
+    const searchQuery = (document.getElementById('searchResultsInput')?.value || '').trim().toLowerCase();
+
+    renderStudentConsultationPanel(sortedResults);
+    const selectedConsultStudentKey = document.getElementById('filterResultsStudent')?.value || 'ALL';
 
     document.getElementById('kpiAvgScore').innerText = analytics.averageScore;
     document.getElementById('kpiHighestScore').innerText = analytics.highestScore;
@@ -2040,10 +2776,34 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const rankedResults = sortedResults
+      .map((r, idx) => ({ r, rank: idx + 1 }))
+      .filter(({ r }) => {
+        if (selectedConsultStudentKey !== 'ALL' && getStudentConsultKey(r) !== selectedConsultStudentKey) {
+          return false;
+        }
+        if (!searchQuery) return true;
+        const name = String(r.student?.name || '').toLowerCase();
+        const nisn = String(r.student?.nisn || '').toLowerCase();
+        const cls = String(r.student?.class || '').toLowerCase();
+        return name.includes(searchQuery) || nisn.includes(searchQuery) || cls.includes(searchQuery);
+      });
+
+    if (rankedResults.length === 0) {
+      if (emptyRow) emptyRow.classList.add('hidden');
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" class="p-6 text-center text-slate-500 text-xs sm:text-sm font-medium">
+            Tidak ada peserta yang cocok dengan filter pencarian aktif.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
     if (emptyRow) emptyRow.classList.add('hidden');
 
-    sortedResults.forEach((r, idx) => {
-      const rank = idx + 1;
+    rankedResults.forEach(({ r, rank }) => {
       let rankBadge = `<span class="w-6 h-6 rounded-full bg-slate-100 text-slate-700 font-black text-xs inline-flex items-center justify-center">${rank}</span>`;
       if (rank === 1) {
         rankBadge = `<span class="w-6 h-6 rounded-full bg-amber-100 text-amber-700 font-black text-xs inline-flex items-center justify-center shadow-xs">🥇 1</span>`;
@@ -2066,19 +2826,23 @@ document.addEventListener('DOMContentLoaded', () => {
           }).join('')}</div>`
         : `<span class="text-[11px] text-slate-400">Belum ada rincian jawaban</span>`;
 
+      const stuKey = getStudentConsultKey(r);
       const tr = document.createElement('tr');
       tr.className = "border-b border-slate-100 hover:bg-slate-50 transition text-xs";
       tr.innerHTML = `
-        <td class="p-3 text-center font-bold">${rankBadge}</td>
-        <td class="p-3">
-          <div class="font-bold text-slate-900">${r.student?.name || '-'}</div>
-          <div class="text-[10px] text-slate-400">${r.subject}</div>
+        <td class="px-2.5 py-2.5 text-center font-bold">${rankBadge}</td>
+        <td class="px-2.5 py-2.5">
+          <div class="font-bold text-slate-900">${escapeHtmlSafe(r.student?.name || '-')}</div>
+          <div class="flex flex-wrap items-center gap-1.5 mt-0.5">
+            <span class="text-[10px] text-slate-400">${escapeHtmlSafe(r.subject || '-')}</span>
+            <button type="button" class="btn-consult-student text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer" title="Buka riwayat jawaban lengkap siswa ini untuk konsultasi nilai">💬 Konsultasi</button>
+          </div>
         </td>
-        <td class="p-3 font-mono font-semibold text-slate-700">${r.student?.nisn || '-'}</td>
-        <td class="p-3">
-          <span class="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-xs">${r.student?.class ? 'Kelas ' + r.student.class : '-'}</span>
+        <td class="px-2.5 py-2.5 font-mono font-semibold text-slate-700">${escapeHtmlSafe(r.student?.nisn || '-')}</td>
+        <td class="px-2.5 py-2.5 whitespace-nowrap">
+          <span class="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-xs">${r.student?.class ? 'Kelas ' + escapeHtmlSafe(r.student.class) : '-'}</span>
         </td>
-        <td class="p-3 text-center">
+        <td class="px-2.5 py-2.5 text-center">
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-black ${
             r.finalScore >= 75
               ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
@@ -2087,22 +2851,32 @@ document.addEventListener('DOMContentLoaded', () => {
             ${r.finalScore}
           </span>
         </td>
-        <td class="p-3">${answerChipsHtml}</td>
-        <td class="p-3 text-slate-600 font-mono text-[11px] whitespace-nowrap">${r.completedAt}</td>
-        <td class="p-3 text-center whitespace-nowrap">
+        <td class="px-2.5 py-2.5">${answerChipsHtml}</td>
+        <td class="px-2.5 py-2.5 text-slate-600 font-mono text-[11px] whitespace-nowrap">${escapeHtmlSafe(r.completedAt || '-')}</td>
+        <td class="px-2.5 py-2.5 text-center whitespace-nowrap">
           <div class="inline-flex items-center gap-1.5 font-bold">
             <span class="text-emerald-600">✓${r.correctCount}</span>
             <span class="text-red-500">✗${r.incorrectCount}</span>
             <span class="text-slate-400">?${r.unattemptedCount}</span>
           </div>
         </td>
-        <td class="p-3">
+        <td class="px-2.5 py-2.5 whitespace-nowrap">
           ${(r.cheatCount || 0) > 0
             ? `<span class="text-[11px] font-bold px-2 py-0.5 bg-red-100 text-red-600 rounded inline-block">${r.cheatCount}x Pindah Tab</span>`
             : `<span class="text-[11px] text-emerald-600 font-medium">Tertib (0)</span>`
           }
         </td>
       `;
+      const btnConsult = tr.querySelector('.btn-consult-student');
+      if (btnConsult) {
+        btnConsult.addEventListener('click', () => {
+          const stuSel = document.getElementById('filterResultsStudent');
+          if (stuSel) stuSel.value = stuKey;
+          selectedConsultAttemptIdx = 0;
+          renderAdminAnalyticsAndResults();
+          document.getElementById('studentConsultationPanel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+      }
       tbody.appendChild(tr);
     });
   }
@@ -2143,9 +2917,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnRefreshMon = document.getElementById('btnRefreshMonitoring');
 
     const allSubjects = window.cbtAdmin.getAllSubjects();
-    const ownedSubjects = isAdmin
-      ? allSubjects
-      : (teacherSubjects.length > 0 ? teacherSubjects : (currentTeacher && currentTeacher.subject ? [currentTeacher.subject] : []));
+    const ownedSubjects = isAdmin ? allSubjects : teacherSubjects;
 
     if (ruleSubjEl) {
       const prevRuleSub = ruleSubjEl.value;
@@ -2198,7 +2970,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const prevMonSub = monSubjEl.value;
       monSubjEl.innerHTML = isAdmin
         ? '<option value="ALL">Semua Mata Pelajaran</option>'
-        : (ownedSubjects.length > 1 ? `<option value="ALL">Semua Mapel Diampu</option>` : '');
+        : (ownedSubjects.length > 1
+            ? `<option value="ALL">Semua Mapel Diampu</option>`
+            : (ownedSubjects.length === 0 ? '<option value="ALL">Belum Ada Mapel Diampu</option>' : ''));
       ownedSubjects.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s;
@@ -2390,7 +3164,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const scopedRows = Array.from(rowMap.values()).filter(row => {
       if (!isAdmin) {
-        const subOk = teacherSubjects.length === 0 || teacherSubjects.some(ts => window.examEngine.matchesSubject(row.subject, ts));
+        const subOk = teacherSubjects.length > 0 && teacherSubjects.some(ts => window.examEngine.matchesSubject(row.subject, ts));
         if (!subOk) return false;
         if (assignedClasses.length > 0) {
           const stuCls = String(row.class || '').trim().toUpperCase();
@@ -2557,15 +3331,18 @@ document.addEventListener('DOMContentLoaded', () => {
           subjFilterEl.appendChild(opt);
         });
       } else {
-        const ownedList = teacherSubjects.length > 0
-          ? teacherSubjects
-          : (currentTeacher && currentTeacher.subject ? [currentTeacher.subject] : []);
+        const ownedList = teacherSubjects;
 
         if (ownedList.length > 1) {
           const optOwnedAll = document.createElement('option');
           optOwnedAll.value = 'ALL';
           optOwnedAll.innerText = `Semua Mapel Diampu (${ownedList.join(' / ')})`;
           subjFilterEl.appendChild(optOwnedAll);
+        } else if (ownedList.length === 0) {
+          const optEmpty = document.createElement('option');
+          optEmpty.value = 'ALL';
+          optEmpty.innerText = 'Belum Ada Mapel Diampu';
+          subjFilterEl.appendChild(optEmpty);
         }
 
         ownedList.forEach(s => {
@@ -2654,9 +3431,7 @@ document.addEventListener('DOMContentLoaded', () => {
           modalSubjEl.appendChild(opt);
         });
       } else {
-        const ownedList = teacherSubjects.length > 0
-          ? teacherSubjects
-          : (currentTeacher && currentTeacher.subject ? [currentTeacher.subject] : ['Umum']);
+        const ownedList = teacherSubjects.length > 0 ? teacherSubjects : ['Umum'];
 
         ownedList.forEach(s => {
           const opt = document.createElement('option');
@@ -2721,6 +3496,799 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function escapeHtmlSafe(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function getItemAnalysisBadgeClass(tone) {
+    switch (tone) {
+      case 'emerald':
+        return 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800/60';
+      case 'sky':
+        return 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800/60';
+      case 'blue':
+        return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800/60';
+      case 'amber':
+        return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/60';
+      case 'orange':
+        return 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-950/60 dark:text-orange-300 dark:border-orange-800/60';
+      case 'rose':
+      case 'red':
+        return 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800/60';
+      default:
+        return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700';
+    }
+  }
+
+  function getQualityStatusBadgeInfo(status) {
+    if (status === 'good') return { cls: getItemAnalysisBadgeClass('emerald'), icon: '✅' };
+    if (status === 'revise') return { cls: getItemAnalysisBadgeClass('amber'), icon: '⚠️' };
+    if (status === 'bad') return { cls: getItemAnalysisBadgeClass('rose'), icon: '🚨' };
+    return { cls: getItemAnalysisBadgeClass('slate'), icon: '⏳' };
+  }
+
+  let activeItemAnalysisMode = 'pre_exam';
+
+  function setItemAnalysisMode(mode) {
+    activeItemAnalysisMode = mode === 'empirical' ? 'empirical' : 'pre_exam';
+    const preSec = document.getElementById('preExamAuditSection');
+    const empSec = document.getElementById('empiricalAnalysisSection');
+    const btnPre = document.getElementById('btnModePreExamAudit');
+    const btnEmp = document.getElementById('btnModeEmpiricalAnalysis');
+    const titleEl = document.getElementById('itemAnalysisPanelTitle');
+
+    if (activeItemAnalysisMode === 'pre_exam') {
+      if (preSec) preSec.classList.remove('hidden');
+      if (empSec) empSec.classList.add('hidden');
+      if (btnPre) btnPre.className = 'px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer bg-white text-teal-800 shadow-xs';
+      if (btnEmp) btnEmp.className = 'px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer text-slate-600 hover:text-slate-900';
+      if (titleEl) titleEl.innerText = '🛡️ Cek Kelayakan Teknis Pra-Ujian (Sebelum Ujian Dimulai)';
+      renderPreExamAuditPanel();
+    } else {
+      if (preSec) preSec.classList.add('hidden');
+      if (empSec) empSec.classList.remove('hidden');
+      if (btnPre) btnPre.className = 'px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer text-slate-600 hover:text-slate-900';
+      if (btnEmp) btnEmp.className = 'px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer bg-white text-indigo-800 shadow-xs';
+      if (titleEl) titleEl.innerText = '📈 Analisis Kualitas Butir Soal (Tingkat Kesukaran P & Daya Pembeda D)';
+      renderItemAnalysisPanel();
+    }
+  }
+
+  function renderPreExamAuditPanel(precomputed = null) {
+    const panel = document.getElementById('itemAnalysisPanel');
+    if (!panel) return;
+
+    const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+    const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+    const statusFilter = document.getElementById('filterPreExamStatus')?.value || 'ALL';
+
+    const questions = window.cbtAdmin ? window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter) : [];
+    const audit = precomputed || (window.cbtAdmin && typeof window.cbtAdmin.auditQuestionsPreExam === 'function'
+      ? window.cbtAdmin.auditQuestionsPreExam(questions)
+      : null);
+    if (!audit) return;
+
+    const { items, summary } = audit;
+    const subjLabel = subjFilter === 'ALL' ? 'Semua Mapel' : (subjFilter === 'UMUM' ? 'Umum / Demo' : subjFilter);
+    const clsLabel = classFilter === 'ALL' ? 'Semua Kelas' : classFilter;
+
+    if (activeItemAnalysisMode === 'pre_exam') {
+      const subtitleEl = document.getElementById('itemAnalysisSubtitle');
+      if (subtitleEl) {
+        subtitleEl.innerText = `Filter aktif: ${subjLabel} • ${clsLabel} — Pemeriksaan teknis otomatis ${summary.totalQuestions} butir soal sebelum dikerjakan siswa.`;
+      }
+    }
+
+    const peReady = document.getElementById('peKpiReady');
+    const peReadyPct = document.getElementById('peKpiReadyPercent');
+    const peWarn = document.getElementById('peKpiWarning');
+    const peErr = document.getElementById('peKpiError');
+    const peWeight = document.getElementById('peKpiTotalWeight');
+
+    if (peReady) peReady.innerText = `${summary.readyCount} / ${summary.totalQuestions}`;
+    if (peReadyPct) peReadyPct.innerText = `${summary.readyPercent}% soal lolos cek teknis`;
+    if (peWarn) peWarn.innerText = String(summary.warningCount);
+    if (peErr) peErr.innerText = String(summary.errorCount);
+    if (peWeight) peWeight.innerText = String(summary.totalWeight);
+
+    const tbody = document.getElementById('preExamAuditTbody');
+    if (!tbody) return;
+
+    const filteredItems = statusFilter === 'ALL'
+      ? items
+      : items.filter(it => it.status === statusFilter);
+
+    if (filteredItems.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="p-6 text-center text-slate-500 text-xs font-medium">
+            ${items.length === 0
+              ? 'Belum ada butir soal pada filter mata pelajaran/kelas ini.'
+              : 'Tidak ada butir soal yang cocok dengan filter status teknis ini.'}
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    const typeShort = (t) => t === 'multiple' ? 'PG Kompleks' : (t === 'true_false' ? 'Benar/Salah' : 'PG Tunggal');
+
+    tbody.innerHTML = filteredItems.map(it => {
+      const qSnippetRaw = String(it.questionText || '').replace(/\s+/g, ' ').trim();
+      const qSnippet = qSnippetRaw.length > 90 ? `${qSnippetRaw.slice(0, 90)}…` : qSnippetRaw;
+
+      let statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${getItemAnalysisBadgeClass('emerald')}">✅ Siap Diujikan</span>`;
+      if (it.status === 'error') {
+        statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${getItemAnalysisBadgeClass('rose')}">🚨 Perlu Perbaikan</span>`;
+      } else if (it.status === 'warning') {
+        statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${getItemAnalysisBadgeClass('amber')}">⚠️ Perlu Dicek</span>`;
+      }
+
+      const findingsList = [
+        ...it.errors.map(msg => `<div class="text-rose-700 font-semibold">• ${escapeHtmlSafe(msg)}</div>`),
+        ...it.warnings.map(msg => `<div class="text-amber-700">• ${escapeHtmlSafe(msg)}</div>`)
+      ];
+      const findingsHtml = findingsList.length > 0
+        ? `<div class="space-y-0.5 text-[11px] leading-snug">${findingsList.join('')}</div>`
+        : `<span class="text-[11px] text-emerald-700 font-medium">Kunci jawaban, opsi, bobot, dan redaksi sudah lengkap.</span>`;
+
+      const fixBtnHtml = it.status !== 'ready'
+        ? `<button type="button" class="btn-pre-exam-fix mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold cursor-pointer transition" data-q-index="${it.index - 1}">✏️ Perbaiki Soal No. ${it.index}</button>`
+        : '';
+
+      return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/80 transition">
+          <td class="p-2.5 text-center font-black text-slate-700 align-top">${it.index}</td>
+          <td class="p-2.5 align-top">
+            <div class="font-semibold text-slate-800 leading-snug">${escapeHtmlSafe(qSnippet || '(Soal bergambar / tanpa teks)')}</div>
+            <div class="flex flex-wrap items-center gap-1 mt-1 text-[10px] text-slate-500">
+              <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold">${escapeHtmlSafe(it.subject)}</span>
+              <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">${escapeHtmlSafe(it.classLevel)}</span>
+              ${it.hasImage ? '<span class="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 font-semibold">🖼️ Gambar</span>' : ''}
+            </div>
+          </td>
+          <td class="p-2.5 text-center align-top text-[11px] font-semibold text-slate-700 whitespace-nowrap">${typeShort(it.type)}</td>
+          <td class="p-2.5 text-center align-top font-bold ${it.weight > 0 ? 'text-slate-700' : 'text-rose-600'}">${it.weight}</td>
+          <td class="p-2.5 text-center align-top whitespace-nowrap">${statusBadge}</td>
+          <td class="p-2.5 align-top">
+            ${findingsHtml}
+            ${fixBtnHtml}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.btn-pre-exam-fix').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.getAttribute('data-q-index'), 10);
+        const targetQ = questions[idx];
+        if (targetQ) openQuestionModal(targetQ, idx + 1);
+      });
+    });
+  }
+
+  function renderItemAnalysisD3Charts(analysis, qualityFilter = 'ALL') {
+    const scatterEl = document.getElementById('itemAnalysisScatterChart');
+    const barEl = document.getElementById('itemAnalysisBarChart');
+    if (!scatterEl || !barEl) return;
+
+    lastEmpiricalAnalysisCache = { analysis, qualityFilter };
+
+    const allItems = (analysis && Array.isArray(analysis.items)) ? analysis.items : [];
+    const filtered = qualityFilter === 'ALL'
+      ? allItems
+      : allItems.filter(it => it.qualityStatus === qualityFilter);
+
+    const plotted = filtered.filter(it => it.n >= 2 && it.difficulty !== null && it.discrimination !== null);
+
+    if (plotted.length === 0) {
+      const msg = allItems.length === 0
+        ? 'Belum ada soal pada filter mata pelajaran/kelas ini.'
+        : 'Butuh minimal 2 siswa menyelesaikan ujian (atau ubah Filter Kualitas) untuk menampilkan grafik D3.js.';
+      const emptyHtml = `
+        <div class="text-center py-10 px-4 text-slate-400 text-xs">
+          <p class="font-bold text-slate-600 dark:text-slate-300">Belum cukup data analisis</p>
+          <p class="mt-1">${escapeHtmlSafe(msg)}</p>
+        </div>
+      `;
+      scatterEl.innerHTML = emptyHtml;
+      barEl.innerHTML = emptyHtml;
+      return;
+    }
+
+    if (typeof d3 === 'undefined') {
+      const loadingHtml = `<div class="text-xs text-slate-500 p-4">Library D3.js sedang dimuat...</div>`;
+      scatterEl.innerHTML = loadingHtml;
+      barEl.innerHTML = loadingHtml;
+      return;
+    }
+
+    const theme = getD3ThemeColors();
+    const statusColor = (status) => {
+      if (status === 'good') return '#10b981';
+      if (status === 'revise') return '#f59e0b';
+      if (status === 'bad') return '#e11d48';
+      return '#64748b';
+    };
+
+    // ---- CHART 1: SCATTER PLOT P vs D ----
+    {
+      const width = Math.max(scatterEl.clientWidth || 0, 440);
+      const height = 285;
+      const margin = { top: 20, right: 20, bottom: 44, left: 48 };
+      const innerW = width - margin.left - margin.right;
+      const innerH = height - margin.top - margin.bottom;
+
+      scatterEl.innerHTML = '';
+      const svg = d3.select(scatterEl)
+        .append('svg')
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .attr('class', 'w-full h-auto overflow-visible');
+
+      const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+      const minD = d3.min(plotted, d => d.discrimination) ?? 0;
+      const maxD = d3.max(plotted, d => d.discrimination) ?? 1;
+      const yMin = Math.min(-0.20, Math.floor((minD - 0.1) * 10) / 10);
+      const yMax = Math.max(1.0, Math.ceil((maxD + 0.05) * 10) / 10);
+
+      const x = d3.scaleLinear().domain([0, 1]).range([0, innerW]);
+      const y = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]);
+
+      // Zona Ideal: P in [0.30, 0.70], D in [0.30, yMax]
+      g.append('rect')
+        .attr('x', x(0.30))
+        .attr('y', y(yMax))
+        .attr('width', Math.max(0, x(0.70) - x(0.30)))
+        .attr('height', Math.max(0, y(0.30) - y(yMax)))
+        .attr('fill', theme.idealBg)
+        .attr('stroke', theme.idealStroke)
+        .attr('stroke-width', 1)
+        .attr('stroke-dasharray', '3,3')
+        .attr('rx', 6);
+
+      g.append('text')
+        .attr('x', x(0.50))
+        .attr('y', y(yMax) + 14)
+        .attr('text-anchor', 'middle')
+        .attr('fill', theme.idealStroke)
+        .style('font-size', '10px')
+        .style('font-weight', '800')
+        .text('Zona Ideal (P 0.30–0.70, D ≥ 0.30)');
+
+      // Grid X & Y
+      g.append('g')
+        .attr('transform', `translate(0,${innerH})`)
+        .call(d3.axisBottom(x).ticks(5).tickSize(-innerH).tickFormat(''))
+        .selectAll('line')
+        .attr('stroke', theme.gridLine)
+        .attr('stroke-dasharray', '2,3');
+      g.append('g')
+        .call(d3.axisLeft(y).ticks(5).tickSize(-innerW).tickFormat(''))
+        .selectAll('line')
+        .attr('stroke', theme.gridLine)
+        .attr('stroke-dasharray', '2,3');
+      g.selectAll('.domain').remove();
+
+      // Garis Referensi P = 0.30 & P = 0.70
+      [0.30, 0.70].forEach(pVal => {
+        g.append('line')
+          .attr('x1', x(pVal)).attr('x2', x(pVal))
+          .attr('y1', 0).attr('y2', innerH)
+          .attr('stroke', theme.axisLine)
+          .attr('stroke-width', 1)
+          .attr('stroke-dasharray', '4,4');
+      });
+
+      // Garis Referensi D = 0.30 & D = 0.00
+      g.append('line')
+        .attr('x1', 0).attr('x2', innerW)
+        .attr('y1', y(0.30)).attr('y2', y(0.30))
+        .attr('stroke', theme.idealStroke)
+        .attr('stroke-width', 1.2)
+        .attr('stroke-dasharray', '5,3');
+
+      if (yMin < 0) {
+        g.append('line')
+          .attr('x1', 0).attr('x2', innerW)
+          .attr('y1', y(0)).attr('y2', y(0))
+          .attr('stroke', '#e11d48')
+          .attr('stroke-width', 1.2)
+          .attr('stroke-dasharray', '3,3');
+      }
+
+      // Sumbu X
+      g.append('g')
+        .attr('transform', `translate(0,${innerH})`)
+        .call(d3.axisBottom(x).ticks(5).tickFormat(d3.format('.2f')))
+        .call(ax => ax.select('.domain').attr('stroke', theme.axisLine))
+        .selectAll('text')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10px')
+        .style('font-weight', '600');
+
+      svg.append('text')
+        .attr('x', margin.left + innerW / 2)
+        .attr('y', height - 6)
+        .attr('text-anchor', 'middle')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10.5px')
+        .style('font-weight', '700')
+        .text('Tingkat Kesukaran (P) — Sukar (<0.30) • Sedang (0.30–0.70) • Mudah (>0.70)');
+
+      // Sumbu Y
+      g.append('g')
+        .call(d3.axisLeft(y).ticks(6).tickFormat(d3.format('.2f')))
+        .call(ax => ax.select('.domain').attr('stroke', theme.axisLine))
+        .selectAll('text')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10px')
+        .style('font-weight', '600');
+
+      svg.append('text')
+        .attr('transform', 'rotate(-90)')
+        .attr('x', -(margin.top + innerH / 2))
+        .attr('y', 13)
+        .attr('text-anchor', 'middle')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10.5px')
+        .style('font-weight', '700')
+        .text('Daya Pembeda (D)');
+
+      // Titik Nomor Soal
+      const radius = plotted.length > 24 ? 10 : 12;
+      const nodes = g.selectAll('.ia-scatter-node')
+        .data(plotted)
+        .enter()
+        .append('g')
+        .attr('class', 'ia-scatter-node cursor-pointer')
+        .attr('transform', d => `translate(${x(d.difficulty)},${y(d.discrimination)})`);
+
+      nodes.append('circle')
+        .attr('r', radius)
+        .attr('fill', d => statusColor(d.qualityStatus))
+        .attr('fill-opacity', 0.9)
+        .attr('stroke', '#ffffff')
+        .attr('stroke-width', 1.8);
+
+      nodes.append('text')
+        .attr('dy', '0.35em')
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#ffffff')
+        .style('font-size', plotted.length > 24 ? '9px' : '10px')
+        .style('font-weight', '800')
+        .text(d => d.index);
+
+      nodes
+        .on('mouseenter mousemove', (event, d) => {
+          d3.select(event.currentTarget).select('circle').attr('r', radius + 3).attr('fill-opacity', 1);
+          const snippet = String(d.questionText || '').replace(/\s+/g, ' ').trim().slice(0, 85);
+          showD3Tooltip(event, `
+            <div class="font-extrabold text-slate-900 dark:text-white">Soal No. ${d.index} (${escapeHtmlSafe(d.subject)})</div>
+            <div class="text-slate-500 dark:text-slate-400 mb-1.5">${escapeHtmlSafe(snippet || 'Soal bergambar')}${snippet.length >= 85 ? '…' : ''}</div>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[10px]">
+              <span>Responden: <strong>${d.n}</strong></span>
+              <span>Status: <strong>${escapeHtmlSafe(d.qualityLabel)}</strong></span>
+              <span>Kesukaran P: <strong>${d.difficulty.toFixed(2)}</strong> (${escapeHtmlSafe(d.difficultyLabel)})</span>
+              <span>Pembeda D: <strong>${d.discrimination.toFixed(2)}</strong> (${escapeHtmlSafe(d.discriminationLabel)})</span>
+            </div>
+            <div class="mt-1.5 pt-1 border-t border-slate-200 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-300">${escapeHtmlSafe(d.recommendation)}</div>
+          `);
+        })
+        .on('mouseleave', (event) => {
+          d3.select(event.currentTarget).select('circle').attr('r', radius).attr('fill-opacity', 0.9);
+          hideD3Tooltip();
+        });
+    }
+
+    // ---- CHART 2: GROUPED BAR CHART P & D PER NOMOR ----
+    {
+      const containerW = Math.max(barEl.clientWidth || 0, 460);
+      const width = Math.max(containerW, plotted.length * 42 + 76);
+      const height = 285;
+      const margin = { top: 22, right: 16, bottom: 44, left: 44 };
+      const innerW = width - margin.left - margin.right;
+      const innerH = height - margin.top - margin.bottom;
+
+      barEl.innerHTML = '';
+      const svg = d3.select(barEl)
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .attr('class', 'h-auto overflow-visible');
+
+      const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+      const minD = d3.min(plotted, d => d.discrimination) ?? 0;
+      const yMin = Math.min(0, Math.floor((minD - 0.05) * 10) / 10);
+      const yMax = 1.0;
+
+      const x0 = d3.scaleBand()
+        .domain(plotted.map(d => `No.${d.index}`))
+        .range([0, innerW])
+        .padding(0.24);
+
+      const x1 = d3.scaleBand()
+        .domain(['P', 'D'])
+        .range([0, x0.bandwidth()])
+        .padding(0.12);
+
+      const y = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]);
+      const yZero = y(0);
+
+      // Grid Y
+      g.append('g')
+        .call(d3.axisLeft(y).ticks(5).tickSize(-innerW).tickFormat(''))
+        .selectAll('line')
+        .attr('stroke', theme.gridLine)
+        .attr('stroke-dasharray', '2,3');
+      g.select('.domain').remove();
+
+      // Garis dasar y = 0 & garis batas D = 0.30
+      g.append('line')
+        .attr('x1', 0).attr('x2', innerW)
+        .attr('y1', yZero).attr('y2', yZero)
+        .attr('stroke', theme.axisLine)
+        .attr('stroke-width', 1.2);
+
+      g.append('line')
+        .attr('x1', 0).attr('x2', innerW)
+        .attr('y1', y(0.30)).attr('y2', y(0.30))
+        .attr('stroke', theme.idealStroke)
+        .attr('stroke-width', 1.2)
+        .attr('stroke-dasharray', '5,3');
+
+      g.append('text')
+        .attr('x', innerW - 4)
+        .attr('y', y(0.30) - 5)
+        .attr('text-anchor', 'end')
+        .attr('fill', theme.idealStroke)
+        .style('font-size', '9.5px')
+        .style('font-weight', '700')
+        .text('Batas Layak D = 0.30');
+
+      // Sumbu Y
+      g.append('g')
+        .call(d3.axisLeft(y).ticks(5).tickFormat(d3.format('.2f')))
+        .call(ax => ax.select('.domain').attr('stroke', theme.axisLine))
+        .selectAll('text')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10px')
+        .style('font-weight', '600');
+
+      // Sumbu X
+      g.append('g')
+        .attr('transform', `translate(0,${innerH})`)
+        .call(d3.axisBottom(x0))
+        .call(ax => ax.select('.domain').attr('stroke', theme.axisLine))
+        .selectAll('text')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10px')
+        .style('font-weight', '700');
+
+      svg.append('text')
+        .attr('x', margin.left + innerW / 2)
+        .attr('y', height - 6)
+        .attr('text-anchor', 'middle')
+        .attr('fill', theme.axisText)
+        .style('font-size', '10.5px')
+        .style('font-weight', '700')
+        .text('Nomor Butir Soal');
+
+      const groups = g.selectAll('.ia-bar-group')
+        .data(plotted)
+        .enter()
+        .append('g')
+        .attr('class', 'ia-bar-group cursor-pointer')
+        .attr('transform', d => `translate(${x0(`No.${d.index}`)},0)`);
+
+      // Bar Kesukaran P
+      groups.append('rect')
+        .attr('x', x1('P'))
+        .attr('width', x1.bandwidth())
+        .attr('y', d => y(Math.max(0, d.difficulty)))
+        .attr('height', d => Math.max(2, Math.abs(y(d.difficulty) - yZero)))
+        .attr('rx', 3)
+        .attr('fill', '#3b82f6')
+        .attr('opacity', 0.88);
+
+      // Bar Daya Pembeda D (mendukung nilai negatif turun di bawah garis 0)
+      groups.append('rect')
+        .attr('x', x1('D'))
+        .attr('width', x1.bandwidth())
+        .attr('y', d => d.discrimination >= 0 ? y(d.discrimination) : yZero)
+        .attr('height', d => Math.max(2, Math.abs(y(d.discrimination) - yZero)))
+        .attr('rx', 3)
+        .attr('fill', d => {
+          if (d.discrimination >= 0.30) return '#10b981';
+          if (d.discrimination >= 0.20) return '#f59e0b';
+          return '#e11d48';
+        })
+        .attr('opacity', 0.9);
+
+      groups
+        .on('mouseenter mousemove', (event, d) => {
+          d3.select(event.currentTarget).selectAll('rect').attr('opacity', 1);
+          showD3Tooltip(event, `
+            <div class="font-extrabold text-slate-900 dark:text-white">Butir Soal No. ${d.index}</div>
+            <div class="mt-1 space-y-0.5 text-[10.5px]">
+              <div><span class="font-bold text-blue-600">Kesukaran (P):</span> <strong>${d.difficulty.toFixed(2)}</strong> (${escapeHtmlSafe(d.difficultyLabel)})</div>
+              <div><span class="font-bold text-emerald-600">Daya Pembeda (D):</span> <strong>${d.discrimination.toFixed(2)}</strong> (${escapeHtmlSafe(d.discriminationLabel)})</div>
+              <div>Benar/Salah/Kosong: <strong>${d.correctCount}/${d.incorrectCount}/${d.unattemptedCount}</strong> (N=${d.n})</div>
+              <div class="text-slate-500 dark:text-slate-400">Status: <strong>${escapeHtmlSafe(d.qualityLabel)}</strong></div>
+            </div>
+          `);
+        })
+        .on('mouseleave', (event) => {
+          d3.select(event.currentTarget).selectAll('rect').attr('opacity', 0.9);
+          hideD3Tooltip();
+        });
+    }
+  }
+
+  function renderItemAnalysisPanel(precomputed = null) {
+    const panel = document.getElementById('itemAnalysisPanel');
+    if (!panel) return;
+
+    const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+    const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+    const qualityFilter = document.getElementById('filterItemAnalysisQuality')?.value || 'ALL';
+
+    let analysis = precomputed;
+    if (!analysis && window.cbtAdmin) {
+      const questions = window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter);
+      analysis = window.cbtAdmin.computeItemAnalysis(questions);
+    }
+    if (!analysis) return;
+
+    const { items, summary } = analysis;
+    const subjLabel = subjFilter === 'ALL' ? 'Semua Mapel' : (subjFilter === 'UMUM' ? 'Umum / Demo' : subjFilter);
+    const clsLabel = classFilter === 'ALL' ? 'Semua Kelas' : classFilter;
+
+    if (activeItemAnalysisMode === 'empirical') {
+      const subtitleEl = document.getElementById('itemAnalysisSubtitle');
+      if (subtitleEl) {
+        subtitleEl.innerText = `Filter aktif: ${subjLabel} • ${clsLabel} — Dihitung dari ${summary.totalUniqueRespondents} hasil ujian siswa yang memiliki rincian jawaban.`;
+      }
+    }
+
+    const kpiAnalyzed = document.getElementById('iaKpiAnalyzed');
+    const kpiRespondents = document.getElementById('iaKpiRespondents');
+    const kpiGood = document.getElementById('iaKpiGood');
+    const kpiRevise = document.getElementById('iaKpiRevise');
+    const kpiBad = document.getElementById('iaKpiBad');
+
+    if (kpiAnalyzed) kpiAnalyzed.innerText = `${summary.analyzedCount} / ${summary.totalQuestions}`;
+    if (kpiRespondents) kpiRespondents.innerText = `${summary.totalUniqueRespondents} lembar jawaban terekam`;
+    if (kpiGood) kpiGood.innerText = String(summary.goodCount);
+    if (kpiRevise) kpiRevise.innerText = String(summary.reviseCount);
+    if (kpiBad) kpiBad.innerText = String(summary.badCount);
+
+    // Render Grafik Visualisasi D3.js (Sebaran P vs D + Bar P & D per Nomor)
+    renderItemAnalysisD3Charts(analysis, qualityFilter);
+
+    const tbody = document.getElementById('itemAnalysisTbody');
+    if (!tbody) return;
+
+    const filteredItems = qualityFilter === 'ALL'
+      ? items
+      : items.filter(it => it.qualityStatus === qualityFilter);
+
+    if (filteredItems.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="p-6 text-center text-slate-500 text-xs font-medium">
+            ${items.length === 0
+              ? 'Belum ada butir soal pada filter mata pelajaran/kelas ini.'
+              : 'Tidak ada butir soal yang cocok dengan filter kualitas ini.'}
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    const typeShort = (t) => t === 'multiple' ? 'PG Kompleks' : (t === 'true_false' ? 'Benar/Salah' : 'PG Tunggal');
+
+    tbody.innerHTML = filteredItems.map(it => {
+      const qSnippetRaw = String(it.questionText || '').replace(/\s+/g, ' ').trim();
+      const qSnippet = qSnippetRaw.length > 95 ? `${qSnippetRaw.slice(0, 95)}…` : qSnippetRaw;
+      const pBadgeCls = getItemAnalysisBadgeClass(it.difficultyTone);
+      const dBadgeCls = getItemAnalysisBadgeClass(it.discriminationTone);
+      const qBadgeInfo = getQualityStatusBadgeInfo(it.qualityStatus);
+      const pText = it.difficulty !== null ? it.difficulty.toFixed(2) : '-';
+      const dText = it.discrimination !== null ? it.discrimination.toFixed(2) : '-';
+      const groupHint = (it.upperRate !== null && it.lowerRate !== null)
+        ? `<div class="text-[10px] text-slate-400 mt-0.5">PA: ${it.upperRate.toFixed(2)} · PB: ${it.lowerRate.toFixed(2)}</div>`
+        : '';
+
+      return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/80 transition">
+          <td class="p-2.5 text-center font-black text-slate-700 align-top">${it.index}</td>
+          <td class="p-2.5 align-top">
+            <div class="font-semibold text-slate-800 leading-snug">${escapeHtmlSafe(qSnippet || '(Soal bergambar / tanpa teks)')}</div>
+            <div class="flex flex-wrap items-center gap-1 mt-1 text-[10px] text-slate-500">
+              <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold">${escapeHtmlSafe(it.subject)}</span>
+              <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">${escapeHtmlSafe(it.classLevel)}</span>
+              <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">${typeShort(it.type)}</span>
+            </div>
+          </td>
+          <td class="p-2.5 text-center font-bold text-slate-700 align-top">${it.n}</td>
+          <td class="p-2.5 text-center align-top whitespace-nowrap">
+            <span class="text-emerald-700 font-bold">${it.correctCount}</span> /
+            <span class="text-rose-600 font-bold">${it.incorrectCount}</span> /
+            <span class="text-slate-500 font-semibold">${it.unattemptedCount}</span>
+            ${it.partialCount > 0 ? `<div class="text-[10px] text-amber-700 font-semibold">Parsial: ${it.partialCount}</div>` : ''}
+          </td>
+          <td class="p-2.5 text-center align-top">
+            <div class="font-black text-slate-800">${pText}</div>
+            <span class="inline-block mt-0.5 px-2 py-0.5 rounded-md border text-[10px] font-bold ${pBadgeCls}">${escapeHtmlSafe(it.difficultyLabel)}</span>
+          </td>
+          <td class="p-2.5 text-center align-top">
+            <div class="font-black text-slate-800">${dText}</div>
+            <span class="inline-block mt-0.5 px-2 py-0.5 rounded-md border text-[10px] font-bold ${dBadgeCls}">${escapeHtmlSafe(it.discriminationLabel)}</span>
+            ${groupHint}
+          </td>
+          <td class="p-2.5 align-top">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${qBadgeInfo.cls}">
+              <span>${qBadgeInfo.icon}</span>
+              <span>${escapeHtmlSafe(it.qualityLabel)}</span>
+            </span>
+            <p class="text-[11px] text-slate-600 mt-1 leading-snug">${escapeHtmlSafe(it.recommendation)}</p>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  let teacherProgressCollapsed = false;
+
+  function renderAdminTeacherQuestionProgress() {
+    const panel = document.getElementById('adminTeacherQuestionProgressPanel');
+    if (!panel || !window.cbtAdmin) return;
+    const currentTeacher = window.cbtAdmin.getCurrentTeacher();
+    const isAdmin = currentTeacher && (currentTeacher.role === 'admin' || currentTeacher.id === 'admin');
+    if (!isAdmin) {
+      panel.classList.add('hidden');
+      return;
+    }
+    panel.classList.remove('hidden');
+
+    const targetInput = document.getElementById('teacherProgressTargetInput');
+    const targetMin = Math.max(1, parseInt(targetInput ? targetInput.value : '20', 10) || 20);
+    const searchQ = String(document.getElementById('searchTeacherProgress')?.value || '').trim().toLowerCase();
+    const statusFilter = document.getElementById('filterTeacherProgressStatus')?.value || 'ALL';
+
+    const list = window.cbtAdmin.getTeacherQuestionProgressList();
+    let readyCount = 0;
+    let partialCount = 0;
+    let emptyCount = 0;
+
+    list.forEach(item => {
+      if (item.totalQuestions >= targetMin) readyCount++;
+      else if (item.totalQuestions > 0) partialCount++;
+      else emptyCount++;
+    });
+
+    const setEl = (id, txt) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = txt;
+    };
+    setEl('tpKpiTotalTeachers', `${list.length} Guru`);
+    setEl('tpKpiReadyTeachers', `${readyCount} Guru`);
+    setEl('tpKpiPartialTeachers', `${partialCount} Guru`);
+    setEl('tpKpiEmptyTeachers', `${emptyCount} Guru`);
+
+    const filtered = list.filter(item => {
+      const st = item.totalQuestions >= targetMin ? 'ready' : (item.totalQuestions > 0 ? 'partial' : 'empty');
+      if (statusFilter !== 'ALL' && st !== statusFilter) return false;
+      if (!searchQ) return true;
+      const name = String(item.teacher.name || '').toLowerCase();
+      const nip = String(item.teacher.nip || '').toLowerCase();
+      const subStr = item.subjects.join(' ').toLowerCase();
+      return name.includes(searchQ) || nip.includes(searchQ) || subStr.includes(searchQ);
+    });
+
+    const tbody = document.getElementById('adminTeacherProgressTbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="p-5 text-center text-slate-400">Tidak ada data guru yang cocok dengan filter progres.</td></tr>`;
+      return;
+    }
+
+    filtered.forEach((item, idx) => {
+      const pct = Math.min(100, Math.round((item.totalQuestions / targetMin) * 100));
+      let barCls = 'bg-rose-500';
+      let badgeHtml = `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-bold text-[10px]">Belum Mengisi (0)</span>`;
+      if (item.totalQuestions >= targetMin) {
+        barCls = 'bg-emerald-500';
+        badgeHtml = `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[10px]">✓ Memenuhi Target</span>`;
+      } else if (item.totalQuestions > 0) {
+        barCls = 'bg-amber-500';
+        badgeHtml = `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px]">Proses (${pct}%)</span>`;
+      }
+
+      const subjPills = item.subjectBreakdown.length > 0
+        ? item.subjectBreakdown.map(sb => {
+            const cls = sb.total >= targetMin ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : (sb.total > 0 ? 'bg-blue-50 text-blue-800 border-blue-200' : 'bg-rose-50 text-rose-700 border-rose-200');
+            return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold ${cls}">${escapeHtmlSafe(sb.subject)}: ${sb.total} soal${sb.createdByMe > 0 ? ` (✍️${sb.createdByMe})` : ''}</span>`;
+          }).join(' ')
+        : `<span class="text-[11px] text-slate-400 italic">Belum ada mapel</span>`;
+
+      const firstSub = item.subjects[0] || 'ALL';
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/70';
+      tr.innerHTML = `
+        <td class="p-2.5 text-center font-bold text-slate-400">${idx + 1}</td>
+        <td class="p-2.5">
+          <div class="font-bold text-slate-900 dark:text-slate-100">${escapeHtmlSafe(item.teacher.name || '-')}</div>
+          <div class="text-[10px] text-slate-400 font-mono">NIP: ${escapeHtmlSafe(item.teacher.nip || '-')}${item.teacherClasses.length > 0 ? ` • Kls: ${escapeHtmlSafe(item.teacherClasses.join(', '))}` : ''}</div>
+          <div class="text-[10px] text-indigo-700 font-semibold mt-0.5">✍️ Diinput sendiri: <strong>${item.createdByCount}</strong> soal</div>
+        </td>
+        <td class="p-2.5"><div class="flex flex-wrap gap-1">${subjPills}</div></td>
+        <td class="p-2.5 text-center whitespace-nowrap">
+          <div class="inline-flex items-center gap-1 text-[10px] font-bold">
+            <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700" title="PG Tunggal">PG:${item.singleCount}</span>
+            <span class="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700" title="PG Kompleks">PGK:${item.multipleCount}</span>
+            <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800" title="Benar/Salah">BS:${item.trueFalseCount}</span>
+          </div>
+        </td>
+        <td class="p-2.5">
+          <div class="flex items-center justify-between text-[11px] font-extrabold mb-1">
+            <span>${item.totalQuestions} / ${targetMin} Soal</span>
+            ${badgeHtml}
+          </div>
+          <div class="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div class="${barCls} h-full transition-all" style="width:${pct}%"></div>
+          </div>
+        </td>
+        <td class="p-2.5 text-center">
+          <button type="button" class="btn-jump-teacher-q px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] cursor-pointer transition">
+            🔍 Lihat Soal
+          </button>
+        </td>
+      `;
+
+      const jumpBtn = tr.querySelector('.btn-jump-teacher-q');
+      if (jumpBtn) {
+        jumpBtn.addEventListener('click', () => {
+          const subjFilterEl = document.getElementById('filterQuestionsSubject');
+          if (subjFilterEl && firstSub !== 'ALL') {
+            const hasOpt = Array.from(subjFilterEl.options).some(o => o.value === firstSub);
+            if (hasOpt) subjFilterEl.value = firstSub;
+          }
+          renderAdminQuestionList();
+          document.getElementById('adminQuestionList')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  const btnToggleTeacherProgress = document.getElementById('btnToggleTeacherProgress');
+  if (btnToggleTeacherProgress) {
+    btnToggleTeacherProgress.addEventListener('click', () => {
+      teacherProgressCollapsed = !teacherProgressCollapsed;
+      const body = document.getElementById('teacherProgressBody');
+      if (body) body.classList.toggle('hidden', teacherProgressCollapsed);
+      btnToggleTeacherProgress.innerText = teacherProgressCollapsed ? '▸ Tampilkan Progres' : '▾ Sembunyikan';
+    });
+  }
+  const searchTeacherProgressEl = document.getElementById('searchTeacherProgress');
+  if (searchTeacherProgressEl) searchTeacherProgressEl.addEventListener('input', () => renderAdminTeacherQuestionProgress());
+  const filterTeacherProgressStatusEl = document.getElementById('filterTeacherProgressStatus');
+  if (filterTeacherProgressStatusEl) filterTeacherProgressStatusEl.addEventListener('change', () => renderAdminTeacherQuestionProgress());
+  const teacherProgressTargetEl = document.getElementById('teacherProgressTargetInput');
+  if (teacherProgressTargetEl) teacherProgressTargetEl.addEventListener('input', () => renderAdminTeacherQuestionProgress());
+
   function renderAdminQuestionList() {
     const listContainer = document.getElementById('adminQuestionList');
     const totalCountEl = document.getElementById('adminTotalQuestionsCount');
@@ -2729,6 +4297,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const questions = window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter);
     const totalAll = window.cbtAdmin.getAllQuestions().length;
+    const analysisResult = (window.cbtAdmin && typeof window.cbtAdmin.computeItemAnalysis === 'function')
+      ? window.cbtAdmin.computeItemAnalysis(questions)
+      : { items: [], summary: null };
+    const preExamResult = (window.cbtAdmin && typeof window.cbtAdmin.auditQuestionsPreExam === 'function')
+      ? window.cbtAdmin.auditQuestionsPreExam(questions)
+      : { items: [], summary: null };
 
     const subjLabel = subjFilter === 'ALL'
       ? 'Semua Mapel'
@@ -2738,6 +4312,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (totalCountEl) {
       totalCountEl.innerText = `${questions.length} Soal (${subjLabel}${clsLabel}) — Total Bank: ${totalAll}`;
     }
+
+    const panel = document.getElementById('itemAnalysisPanel');
+    if (panel && !panel.classList.contains('hidden')) {
+      if (activeItemAnalysisMode === 'pre_exam') {
+        renderPreExamAuditPanel(preExamResult);
+      } else {
+        renderItemAnalysisPanel(analysisResult);
+      }
+    }
+
+    renderAdminTeacherQuestionProgress();
+
     if (!listContainer) return;
 
     listContainer.innerHTML = '';
@@ -2758,6 +4344,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const type = q.type || 'single';
       const qSubj = q.subject && String(q.subject).trim() !== '' ? q.subject : 'Umum / Demo';
       const qClass = q.classLevel && String(q.classLevel).trim() !== '' ? q.classLevel : 'Semua Kelas';
+      const itemStat = analysisResult.items[index] || null;
+      const preExamStat = preExamResult.items[index] || null;
       const card = document.createElement('div');
       card.className = "bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs hover:border-slate-300 transition";
 
@@ -2803,6 +4391,55 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
       }
 
+      let preExamBadgeHtml = '';
+      if (preExamStat) {
+        if (preExamStat.status === 'error') {
+          preExamBadgeHtml = `<span class="px-2 py-0.5 rounded-md border font-bold ${getItemAnalysisBadgeClass('rose')}" title="${escapeHtmlSafe(preExamStat.errors.join(' | '))}">🚨 Teknis: ${escapeHtmlSafe(preExamStat.errors[0])}</span>`;
+        } else if (preExamStat.status === 'warning') {
+          preExamBadgeHtml = `<span class="px-2 py-0.5 rounded-md border font-bold ${getItemAnalysisBadgeClass('amber')}" title="${escapeHtmlSafe(preExamStat.warnings.join(' | '))}">⚠️ Pra-Ujian: ${escapeHtmlSafe(preExamStat.warnings[0])}</span>`;
+        } else {
+          preExamBadgeHtml = `<span class="px-2 py-0.5 rounded-md border font-bold ${getItemAnalysisBadgeClass('emerald')}">🛡️ Teknis: Siap Diujikan</span>`;
+        }
+      }
+
+      let analysisStripHtml = '';
+      if (itemStat || preExamStat) {
+        if (!itemStat || itemStat.n === 0) {
+          analysisStripHtml = `
+            <div class="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <div>${preExamBadgeHtml}</div>
+              <span class="text-slate-400">📊 P &amp; D: Menunggu jawaban siswa</span>
+            </div>
+          `;
+        } else {
+          const pCls = getItemAnalysisBadgeClass(itemStat.difficultyTone);
+          const dCls = getItemAnalysisBadgeClass(itemStat.discriminationTone);
+          const qInfo = getQualityStatusBadgeInfo(itemStat.qualityStatus);
+          const pStr = itemStat.difficulty !== null ? itemStat.difficulty.toFixed(2) : '-';
+          const dStr = itemStat.discrimination !== null ? itemStat.discrimination.toFixed(2) : '-';
+          analysisStripHtml = `
+            <div class="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]" title="${escapeHtmlSafe(itemStat.recommendation)}">
+              <div class="flex flex-wrap items-center gap-1.5">
+                ${preExamBadgeHtml}
+                <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold">
+                  👥 N=${itemStat.n} (B:${itemStat.correctCount}${itemStat.partialCount > 0 ? ` · P:${itemStat.partialCount}` : ''} · S:${itemStat.incorrectCount})
+                </span>
+                <span class="px-2 py-0.5 rounded-md border font-bold ${pCls}">
+                  P: ${pStr} (${escapeHtmlSafe(itemStat.difficultyLabel)})
+                </span>
+                <span class="px-2 py-0.5 rounded-md border font-bold ${dCls}">
+                  D: ${dStr} (${escapeHtmlSafe(itemStat.discriminationLabel)})
+                </span>
+              </div>
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-bold ${qInfo.cls}">
+                <span>${qInfo.icon}</span>
+                <span>${escapeHtmlSafe(itemStat.qualityLabel)}</span>
+              </span>
+            </div>
+          `;
+        }
+      }
+
       card.innerHTML = `
         <div class="flex items-start justify-between gap-3">
           <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -2833,6 +4470,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <p class="text-slate-800 text-xs sm:text-sm font-medium mt-2.5 whitespace-pre-line leading-relaxed">${q.question}</p>
         ${q.image ? `<div class="mt-2.5 p-1.5 bg-slate-50 rounded-xl border border-slate-200 inline-block max-w-xs"><img src="${q.image}" alt="Gambar Soal" class="rounded-lg max-h-28 object-contain"></div>` : ''}
         ${answerDetailsHtml}
+        ${analysisStripHtml}
       `;
 
       card.querySelector('.btn-edit-q').addEventListener('click', () => {
@@ -2952,10 +4590,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('qInputOptB').value = optsMap['B'] || '';
         document.getElementById('qInputOptC').value = optsMap['C'] || '';
         document.getElementById('qInputOptD').value = optsMap['D'] || '';
-        document.getElementById('qInputOptE').value = optsMap['E'] || '';
 
         if (qType === 'single') {
-          document.getElementById('qInputCorrectSingle').value = String(question.correctAnswer || 'A').toUpperCase();
+          const singleKey = String(question.correctAnswer || 'A').toUpperCase();
+          document.getElementById('qInputCorrectSingle').value = ['A', 'B', 'C', 'D'].includes(singleKey) ? singleKey : 'A';
         } else {
           const correctKeys = Array.isArray(question.correctAnswer)
             ? question.correctAnswer.map(k => String(k).toUpperCase())
@@ -3033,7 +4671,6 @@ document.addEventListener('DOMContentLoaded', () => {
       let qData = { subject, classLevel, type, question: questionText, image, weight };
 
       if (type === 'single') {
-        const optE = document.getElementById('qInputOptE').value.trim();
         const correctSingle = document.getElementById('qInputCorrectSingle').value;
         const opts = [
           { key: "A", text: document.getElementById('qInputOptA').value.trim() },
@@ -3041,27 +4678,22 @@ document.addEventListener('DOMContentLoaded', () => {
           { key: "C", text: document.getElementById('qInputOptC').value.trim() },
           { key: "D", text: document.getElementById('qInputOptD').value.trim() }
         ];
-        if (optE || correctSingle === 'E') {
-          opts.push({ key: "E", text: optE });
-        }
         qData.options = opts;
-        qData.correctAnswer = correctSingle;
+        qData.correctAnswer = ['A', 'B', 'C', 'D'].includes(correctSingle) ? correctSingle : 'A';
       } else if (type === 'multiple') {
-        const checkedBoxes = Array.from(document.querySelectorAll('input[name="multiCorrect"]:checked')).map(el => el.value);
+        const checkedBoxes = Array.from(document.querySelectorAll('input[name="multiCorrect"]:checked'))
+          .map(el => el.value)
+          .filter(v => ['A', 'B', 'C', 'D'].includes(v));
         if (checkedBoxes.length === 0) {
           alert("Pilih minimal 1 kunci jawaban untuk soal pilihan ganda kompleks!");
           return;
         }
-        const optE = document.getElementById('qInputOptE').value.trim();
         const opts = [
           { key: "A", text: document.getElementById('qInputOptA').value.trim() },
           { key: "B", text: document.getElementById('qInputOptB').value.trim() },
           { key: "C", text: document.getElementById('qInputOptC').value.trim() },
           { key: "D", text: document.getElementById('qInputOptD').value.trim() }
         ];
-        if (optE || checkedBoxes.includes('E')) {
-          opts.push({ key: "E", text: optE });
-        }
         qData.options = opts;
         qData.correctAnswer = checkedBoxes;
       } else if (type === 'true_false') {
@@ -3115,6 +4747,129 @@ document.addEventListener('DOMContentLoaded', () => {
       const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
       const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
       window.cbtAdmin.exportQuestionsJSON(subjFilter, classFilter);
+    });
+  }
+
+  // Kontrol Panel Cek Pra-Ujian & Analisis Butir Soal (Tingkat Kesukaran P & Daya Pembeda D)
+  const itemAnalysisPanel = document.getElementById('itemAnalysisPanel');
+  const btnTogglePreExamAudit = document.getElementById('btnTogglePreExamAudit');
+  const btnToggleItemAnalysis = document.getElementById('btnToggleItemAnalysis');
+  const btnModePreExamAudit = document.getElementById('btnModePreExamAudit');
+  const btnModeEmpiricalAnalysis = document.getElementById('btnModeEmpiricalAnalysis');
+  const btnCloseItemAnalysis = document.getElementById('btnCloseItemAnalysis');
+  const filterPreExamStatus = document.getElementById('filterPreExamStatus');
+  const btnExportPreExamAuditExcel = document.getElementById('btnExportPreExamAuditExcel');
+  const filterItemAnalysisQuality = document.getElementById('filterItemAnalysisQuality');
+  const btnSyncItemAnalysisCloud = document.getElementById('btnSyncItemAnalysisCloud');
+  const btnExportItemAnalysisExcel = document.getElementById('btnExportItemAnalysisExcel');
+
+  if (btnTogglePreExamAudit && itemAnalysisPanel) {
+    btnTogglePreExamAudit.addEventListener('click', () => {
+      const isHidden = itemAnalysisPanel.classList.contains('hidden');
+      if (!isHidden && activeItemAnalysisMode === 'pre_exam') {
+        itemAnalysisPanel.classList.add('hidden');
+      } else {
+        itemAnalysisPanel.classList.remove('hidden');
+        setItemAnalysisMode('pre_exam');
+        itemAnalysisPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+
+  if (btnToggleItemAnalysis && itemAnalysisPanel) {
+    btnToggleItemAnalysis.addEventListener('click', () => {
+      const isHidden = itemAnalysisPanel.classList.contains('hidden');
+      if (!isHidden && activeItemAnalysisMode === 'empirical') {
+        itemAnalysisPanel.classList.add('hidden');
+      } else {
+        itemAnalysisPanel.classList.remove('hidden');
+        setItemAnalysisMode('empirical');
+        itemAnalysisPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+
+  if (btnModePreExamAudit) {
+    btnModePreExamAudit.addEventListener('click', () => setItemAnalysisMode('pre_exam'));
+  }
+
+  if (btnModeEmpiricalAnalysis) {
+    btnModeEmpiricalAnalysis.addEventListener('click', () => setItemAnalysisMode('empirical'));
+  }
+
+  if (btnCloseItemAnalysis && itemAnalysisPanel) {
+    btnCloseItemAnalysis.addEventListener('click', () => {
+      itemAnalysisPanel.classList.add('hidden');
+    });
+  }
+
+  if (filterPreExamStatus) {
+    filterPreExamStatus.addEventListener('change', () => {
+      renderPreExamAuditPanel();
+    });
+  }
+
+  if (btnExportPreExamAuditExcel) {
+    btnExportPreExamAuditExcel.addEventListener('click', () => {
+      if (!window.cbtAdmin) return;
+      const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+      const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+      const questions = window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter);
+      const { items } = window.cbtAdmin.auditQuestionsPreExam(questions);
+      window.cbtAdmin.exportPreExamAuditExcel(items, {
+        subject: subjFilter === 'ALL' ? 'Semua_Mapel' : subjFilter,
+        classLevel: classFilter
+      });
+    });
+  }
+
+  if (filterItemAnalysisQuality) {
+    filterItemAnalysisQuality.addEventListener('change', () => {
+      renderItemAnalysisPanel();
+    });
+  }
+
+  if (btnSyncItemAnalysisCloud) {
+    btnSyncItemAnalysisCloud.addEventListener('click', async () => {
+      if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) {
+        alert("Supabase Cloud belum dikonfigurasi. Pastikan koneksi Cloud sudah aktif di menu Pengaturan.");
+        return;
+      }
+      const origHtml = btnSyncItemAnalysisCloud.innerHTML;
+      btnSyncItemAnalysisCloud.disabled = true;
+      btnSyncItemAnalysisCloud.innerHTML = '<span>⏳ Menarik Data...</span>';
+      try {
+        const res = await window.supabaseSync.fetchCloudResults();
+        if (res && res.success) {
+          renderAdminQuestionList();
+          renderItemAnalysisPanel();
+          if (typeof renderAdminAnalyticsAndResults === 'function') {
+            renderAdminAnalyticsAndResults();
+          }
+          alert(`Berhasil menarik ${res.count || 0} data hasil ujian dari Cloud. Analisis butir soal telah diperbarui.`);
+        } else {
+          alert(`Gagal menarik data cloud: ${(res && res.message) || 'Terjadi kesalahan'}`);
+        }
+      } catch (err) {
+        alert(`Gagal menarik data cloud: ${err.message || err}`);
+      } finally {
+        btnSyncItemAnalysisCloud.disabled = false;
+        btnSyncItemAnalysisCloud.innerHTML = origHtml;
+      }
+    });
+  }
+
+  if (btnExportItemAnalysisExcel) {
+    btnExportItemAnalysisExcel.addEventListener('click', () => {
+      if (!window.cbtAdmin) return;
+      const subjFilter = document.getElementById('filterQuestionsSubject')?.value || 'ALL';
+      const classFilter = document.getElementById('filterQuestionsClass')?.value || 'ALL';
+      const questions = window.cbtAdmin.getQuestionsFiltered(subjFilter, classFilter);
+      const { items } = window.cbtAdmin.computeItemAnalysis(questions);
+      window.cbtAdmin.exportItemAnalysisExcel(items, {
+        subject: subjFilter === 'ALL' ? 'Semua_Mapel' : subjFilter,
+        classLevel: classFilter
+      });
     });
   }
 
@@ -3819,6 +5574,9 @@ document.addEventListener('DOMContentLoaded', () => {
               alert(delRes.message);
               renderAdminTeachersList(document.getElementById('searchTeacherInput')?.value || '');
               setupSubjectAndClassFilters();
+              setupQuestionBankFilters();
+              setupMonitoringControls();
+              renderAdminTeacherQuestionProgress();
             } else {
               alert(delRes.message);
             }
@@ -3905,6 +5663,9 @@ document.addEventListener('DOMContentLoaded', () => {
           closeEditTeacherModal();
           renderAdminTeachersList();
           setupSubjectAndClassFilters();
+          setupQuestionBankFilters();
+          setupMonitoringControls();
+          renderAdminTeacherQuestionProgress();
         } else {
           alert(`Gagal menambah guru: ${res.message}`);
         }
@@ -3915,6 +5676,9 @@ document.addEventListener('DOMContentLoaded', () => {
           closeEditTeacherModal();
           renderAdminTeachersList();
           setupSubjectAndClassFilters();
+          setupQuestionBankFilters();
+          setupMonitoringControls();
+          renderAdminTeacherQuestionProgress();
           const cur = window.cbtAdmin.getCurrentTeacher();
           if (cur && cur.id === id) renderAdminDashboard();
         } else {
@@ -4070,6 +5834,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!badge || !window.supabaseSync) return;
 
     const isAdminVisible = Boolean(viewAdmin && !viewAdmin.classList.contains('hidden'));
+    updateRealtimeNotifVisibility(isAdminVisible);
+
     if (!isAdminVisible) {
       badge.className = "hidden";
       return;
@@ -4094,6 +5860,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const key = document.getElementById('cfgSupabaseKey').value.trim();
       window.supabaseSync.saveConfig(url, key);
       updateCloudBadge();
+      if (viewAdmin && !viewAdmin.classList.contains('hidden')) {
+        stopAdminRealtimeNotifications();
+        startAdminRealtimeNotifications();
+      }
       const res = await window.supabaseSync.pushAllSchoolState();
       if (res.success) {
         alert("Konfigurasi Cloud disimpan & seluruh data sekolah (Token, Jadwal, Kop/Logo, Soal, Siswa, Guru) berhasil disinkronkan ke Cloud!");
@@ -4210,6 +5980,609 @@ document.addEventListener('DOMContentLoaded', () => {
       reader.readAsText(file);
       e.target.value = '';
     });
+  }
+
+  // ===================== DASHBOARD QUICK JUMP & CLOUD REFRESH =====================
+  document.querySelectorAll('.dash-jump-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-jump-tab');
+      if (target) switchAdminTab(target);
+    });
+  });
+
+  const btnDashOpenPreExam = document.getElementById('btnDashOpenPreExam');
+  if (btnDashOpenPreExam) {
+    btnDashOpenPreExam.addEventListener('click', () => {
+      switchAdminTab('tabQuestions');
+      const panel = document.getElementById('itemAnalysisPanel');
+      if (panel) panel.classList.remove('hidden');
+      setItemAnalysisMode('pre_exam');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+
+  const btnRefreshDashboardOverview = document.getElementById('btnRefreshDashboardOverview');
+  if (btnRefreshDashboardOverview) {
+    btnRefreshDashboardOverview.addEventListener('click', async () => {
+      const origHtml = btnRefreshDashboardOverview.innerHTML;
+      btnRefreshDashboardOverview.disabled = true;
+      btnRefreshDashboardOverview.innerHTML = '<span>⏳ Menyegarkan...</span>';
+      try {
+        if (window.supabaseSync && window.supabaseSync.isCloudConfigured()) {
+          await syncFromCloud(true);
+          if (typeof window.supabaseSync.fetchCloudResults === 'function') {
+            await window.supabaseSync.fetchCloudResults();
+          }
+          if (typeof window.supabaseSync.fetchStudentSessions === 'function') {
+            await window.supabaseSync.fetchStudentSessions();
+          }
+        }
+        renderAdminOverviewDashboard();
+      } catch (err) {
+        console.warn('Gagal menyegarkan dashboard:', err);
+      } finally {
+        btnRefreshDashboardOverview.disabled = false;
+        btnRefreshDashboardOverview.innerHTML = origHtml;
+      }
+    });
+  }
+
+  let d3ResizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(d3ResizeTimer);
+    d3ResizeTimer = setTimeout(() => {
+      refreshVisibleD3Charts();
+    }, 180);
+  });
+
+  // ===================== NOTIFIKASI REAL-TIME ADMIN & GURU (SUPABASE + POLLING) =====================
+  function updateRealtimeNotifVisibility(isAdminVisible) {
+    const container = document.getElementById('realtimeNotifContainer');
+    const dropdown = document.getElementById('realtimeNotifDropdown');
+    const liveTag = document.getElementById('realtimeNotifLiveTag');
+    if (container) {
+      if (isAdminVisible) container.classList.remove('hidden');
+      else {
+        container.classList.add('hidden');
+        if (dropdown) dropdown.classList.add('hidden');
+      }
+    }
+    if (liveTag && window.supabaseSync) {
+      const isCloud = window.supabaseSync.isCloudConfigured();
+      liveTag.innerText = isCloud ? 'Live' : 'Lokal';
+      liveTag.className = isCloud
+        ? 'px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 text-[9px] font-black uppercase'
+        : 'px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300 text-[9px] font-black uppercase';
+    }
+    updateRealtimeBadgeAndSoundUi();
+  }
+
+  function isRecordInCurrentAdminScope(subject, className) {
+    if (!window.cbtAdmin) return true;
+    const currentTeacher = window.cbtAdmin.getCurrentTeacher();
+    if (!currentTeacher) return false;
+    const isAdmin = currentTeacher.role === 'admin' || currentTeacher.id === 'admin';
+    if (isAdmin) return true;
+
+    const teacherSubjects = window.cbtAdmin.getTeacherSubjectsList(currentTeacher).map(s => s.toLowerCase());
+    const subLower = String(subject || '').trim().toLowerCase();
+    const subOk = teacherSubjects.length === 0 || teacherSubjects.some(ts => subLower === ts || subLower.includes(ts) || ts.includes(subLower));
+
+    const assignedClasses = currentTeacher.classes ? window.cbtAdmin.parseTeacherClasses(currentTeacher.classes) : [];
+    const clsUpper = String(className || '').trim().toUpperCase();
+    const clsOk = assignedClasses.length === 0 || assignedClasses.some(tc => clsUpper === tc || clsUpper.startsWith(tc));
+
+    return subOk && clsOk;
+  }
+
+  function playRealtimeNotifSound(type) {
+    if (!realtimeSoundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+
+      const beep = (freq, startOffset, duration, waveType, gainVal) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = waveType;
+        osc.frequency.setValueAtTime(freq, now + startOffset);
+        gain.gain.setValueAtTime(0.0001, now + startOffset);
+        gain.gain.exponentialRampToValueAtTime(gainVal, now + startOffset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + startOffset);
+        osc.stop(now + startOffset + duration + 0.02);
+      };
+
+      if (type === 'cheat') {
+        beep(880, 0, 0.14, 'triangle', 0.12);
+        beep(660, 0.16, 0.2, 'triangle', 0.12);
+      } else {
+        beep(587.33, 0, 0.12, 'sine', 0.08);
+        beep(880, 0.13, 0.2, 'sine', 0.08);
+      }
+      setTimeout(() => { try { ctx.close(); } catch (e) {} }, 600);
+    } catch (e) {}
+  }
+
+  function updateRealtimeBadgeAndSoundUi() {
+    const badge = document.getElementById('realtimeNotifBadge');
+    const soundBtn = document.getElementById('btnToggleNotifSound');
+    if (badge) {
+      if (realtimeUnreadCount > 0) {
+        badge.innerText = realtimeUnreadCount > 99 ? '99+' : String(realtimeUnreadCount);
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    if (soundBtn) {
+      soundBtn.innerText = realtimeSoundEnabled ? '🔊 Suara: ON' : '🔇 Suara: OFF';
+    }
+  }
+
+  function formatNotifClock(isoStr) {
+    try {
+      const d = isoStr ? new Date(isoStr) : new Date();
+      if (isNaN(d.getTime())) return new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (e) {
+      return '--:--';
+    }
+  }
+
+  function renderRealtimeNotifList() {
+    const listEl = document.getElementById('realtimeNotifList');
+    if (!listEl) return;
+
+    const filtered = realtimeNotifs.filter(n => realtimeFilterMode === 'ALL' || n.type === realtimeFilterMode);
+    if (filtered.length === 0) {
+      listEl.innerHTML = `
+        <div class="p-6 text-center text-xs text-slate-400 dark:text-slate-500">
+          ${realtimeFilterMode === 'ALL'
+            ? 'Belum ada aktivitas pelanggaran atau penyelesaian ujian baru pada sesi ini.'
+            : (realtimeFilterMode === 'cheat'
+              ? 'Belum ada notifikasi pelanggaran siswa pada sesi ini.'
+              : 'Belum ada notifikasi penyelesaian ujian baru pada sesi ini.')}
+        </div>`;
+      return;
+    }
+
+    listEl.innerHTML = filtered.map(item => {
+      const isCheat = item.type === 'cheat';
+      const iconBg = isCheat
+        ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-300'
+        : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300';
+      const badgeCls = isCheat
+        ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300'
+        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300';
+      const targetTab = isCheat ? 'tabMonitoring' : 'tabResults';
+      const actionLabel = isCheat ? 'Pantau Siswa →' : 'Lihat Nilai →';
+
+      return `
+        <div class="p-3 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition flex items-start gap-2.5">
+          <div class="w-8 h-8 rounded-xl ${iconBg} flex items-center justify-center shrink-0 text-sm font-bold mt-0.5">
+            ${isCheat ? '⚠️' : '✅'}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold ${badgeCls}">
+                ${isCheat ? 'Pelanggaran Anti-Tab' : 'Ujian Selesai'}
+              </span>
+              <span class="text-[10px] text-slate-400 font-semibold">${escapeHtmlSafe(item.timeLabel)}</span>
+            </div>
+            <p class="text-xs font-extrabold text-slate-900 dark:text-white truncate mt-1">
+              ${escapeHtmlSafe(item.studentName)} <span class="font-semibold text-slate-500 dark:text-slate-400">(${escapeHtmlSafe(item.studentClass)})</span>
+            </p>
+            <p class="text-[11px] font-semibold text-blue-700 dark:text-sky-400 truncate">${escapeHtmlSafe(item.subject)}</p>
+            <p class="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">${escapeHtmlSafe(item.detail)}</p>
+            <div class="mt-1.5 flex items-center justify-between gap-2">
+              <span class="text-[10px] text-slate-400 font-mono">NISN: ${escapeHtmlSafe(item.nisn)}</span>
+              <button type="button" data-notif-jump="${targetTab}" class="notif-jump-btn text-[10px] font-extrabold text-blue-600 dark:text-sky-400 hover:underline cursor-pointer">
+                ${actionLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    listEl.querySelectorAll('.notif-jump-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-notif-jump');
+        const dropdown = document.getElementById('realtimeNotifDropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+        if (target) switchAdminTab(target);
+      });
+    });
+  }
+
+  function showRealtimeToast(item) {
+    const stack = document.getElementById('cbtRealtimeToastStack');
+    if (!stack || !viewAdmin || viewAdmin.classList.contains('hidden')) return;
+
+    while (stack.children.length >= 4) {
+      stack.removeChild(stack.firstElementChild);
+    }
+
+    const isCheat = item.type === 'cheat';
+    const targetTab = isCheat ? 'tabMonitoring' : 'tabResults';
+    const toast = document.createElement('div');
+    toast.className = `pointer-events-auto rounded-2xl border shadow-2xl p-3.5 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-all duration-300 flex items-start gap-3 ${
+      isCheat
+        ? 'border-rose-300 dark:border-rose-700/70 ring-1 ring-rose-500/20'
+        : 'border-emerald-300 dark:border-emerald-700/70 ring-1 ring-emerald-500/20'
+    }`;
+
+    toast.innerHTML = `
+      <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-base ${
+        isCheat
+          ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/50 dark:text-rose-300'
+          : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/50 dark:text-emerald-300'
+      }">${isCheat ? '🚨' : '✅'}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[11px] font-black uppercase tracking-wide ${isCheat ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}">
+            ${isCheat ? 'Peringatan Kecurangan!' : 'Siswa Selesai Ujian'}
+          </span>
+          <button type="button" class="toast-close-btn text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs font-bold px-1 cursor-pointer">✕</button>
+        </div>
+        <p class="text-xs font-extrabold text-slate-900 dark:text-white truncate mt-0.5">
+          ${escapeHtmlSafe(item.studentName)} (${escapeHtmlSafe(item.studentClass)})
+        </p>
+        <p class="text-[11px] font-semibold text-blue-700 dark:text-sky-400 truncate">${escapeHtmlSafe(item.subject)}</p>
+        <p class="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">${escapeHtmlSafe(item.detail)}</p>
+        <div class="mt-2 flex items-center justify-between">
+          <span class="text-[10px] text-slate-400">${escapeHtmlSafe(item.timeLabel)}</span>
+          <button type="button" class="toast-action-btn px-2.5 py-1 rounded-lg text-[10px] font-extrabold text-white ${
+            isCheat ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'
+          } transition cursor-pointer">
+            ${isCheat ? 'Pantau Live →' : 'Buka Rekap →'}
+          </button>
+        </div>
+      </div>
+    `;
+
+    const dismiss = () => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(8px)';
+      setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+    };
+
+    const closeBtn = toast.querySelector('.toast-close-btn');
+    const actionBtn = toast.querySelector('.toast-action-btn');
+    if (closeBtn) closeBtn.addEventListener('click', dismiss);
+    if (actionBtn) {
+      actionBtn.addEventListener('click', () => {
+        dismiss();
+        switchAdminTab(targetTab);
+      });
+    }
+
+    stack.appendChild(toast);
+    setTimeout(dismiss, isCheat ? 9000 : 6000);
+  }
+
+  function mergeSessionIntoMonitoringCache(sess) {
+    if (!sess || !sess.nisn || !window.supabaseSync) return;
+    const key = window.supabaseSync.buildSessionKey(sess.nisn, sess.subject);
+    const idx = cachedMonitoringSessions.findIndex(s => window.supabaseSync.buildSessionKey(s.nisn, s.subject) === key);
+    const normalized = { ...sess, sessionKey: key };
+    if (idx >= 0) cachedMonitoringSessions[idx] = normalized;
+    else cachedMonitoringSessions.unshift(normalized);
+  }
+
+  function refreshActiveAdminViewsOnAlert() {
+    if (!viewAdmin || viewAdmin.classList.contains('hidden')) return;
+    const dashPane = document.getElementById('tabDashboard');
+    const monPane = document.getElementById('tabMonitoring');
+    const resPane = document.getElementById('tabResults');
+    if (dashPane && !dashPane.classList.contains('hidden')) {
+      renderAdminOverviewDashboard();
+    }
+    if (monPane && !monPane.classList.contains('hidden')) {
+      renderMonitoringDashboard(false);
+    }
+    if (resPane && !resPane.classList.contains('hidden')) {
+      renderAdminAnalyticsAndResults();
+    }
+  }
+
+  function triggerThrottledCloudResultsRefresh() {
+    const now = Date.now();
+    if (!window.supabaseSync || !window.supabaseSync.isCloudConfigured()) return;
+    if (now - realtimeLastCloudResultPullAt < 3000) return;
+    realtimeLastCloudResultPullAt = now;
+    window.supabaseSync.fetchCloudResults().then(res => {
+      if (res && res.success) {
+        refreshActiveAdminViewsOnAlert();
+      }
+    }).catch(() => {});
+  }
+
+  function pushRealtimeAlert(eventKey, alertObj) {
+    if (!eventKey || realtimeEmittedEventKeys.has(eventKey)) return;
+    realtimeEmittedEventKeys.add(eventKey);
+    if (realtimeEmittedEventKeys.size > 500) {
+      const firstKey = realtimeEmittedEventKeys.values().next().value;
+      realtimeEmittedEventKeys.delete(firstKey);
+    }
+
+    if (!isRecordInCurrentAdminScope(alertObj.subject, alertObj.studentClass)) return;
+
+    const item = {
+      id: eventKey,
+      type: alertObj.type,
+      nisn: String(alertObj.nisn || '-'),
+      studentName: String(alertObj.studentName || 'Siswa'),
+      studentClass: String(alertObj.studentClass || '-'),
+      subject: String(alertObj.subject || '-'),
+      detail: String(alertObj.detail || ''),
+      timeLabel: formatNotifClock(alertObj.timestamp)
+    };
+
+    realtimeNotifs.unshift(item);
+    if (realtimeNotifs.length > 60) realtimeNotifs = realtimeNotifs.slice(0, 60);
+
+    const dropdown = document.getElementById('realtimeNotifDropdown');
+    if (!dropdown || dropdown.classList.contains('hidden')) {
+      realtimeUnreadCount += 1;
+    }
+
+    updateRealtimeBadgeAndSoundUi();
+    renderRealtimeNotifList();
+    playRealtimeNotifSound(item.type);
+    showRealtimeToast(item);
+    refreshActiveAdminViewsOnAlert();
+  }
+
+  function processSessionDelta(sess, emitAlerts) {
+    if (!sess || !sess.nisn) return;
+    const nisn = String(sess.nisn).trim();
+    const subject = String(sess.subject || 'Umum').trim();
+    const studentName = String(sess.name || sess.student_name || 'Siswa').trim();
+    const studentClass = String(sess.class || sess.class_name || sess.student_class || '-').trim();
+    const key = window.supabaseSync
+      ? window.supabaseSync.buildSessionKey(nisn, subject)
+      : `${nisn.toUpperCase()}__${subject.toLowerCase()}`;
+
+    const cheatCount = Number(sess.cheatCount || 0);
+    const status = String(sess.status || '').trim();
+    const attemptNumber = Number(sess.attemptNumber || 1);
+    const completedAt = String(sess.completedAt || '').trim();
+
+    mergeSessionIntoMonitoringCache(sess);
+
+    const prev = realtimeSessionSnapshot.get(key);
+    const cfg = window.cbtAdmin && typeof window.cbtAdmin.getConfig === 'function' ? window.cbtAdmin.getConfig() : { maxCheatViolations: 3 };
+    const maxViolations = Number(cfg.maxCheatViolations || 3);
+
+    if (emitAlerts && realtimeBaselineReady) {
+      if (cheatCount > 0 && (!prev || cheatCount > prev.cheatCount)) {
+        const logs = Array.isArray(sess.cheatLogs) ? sess.cheatLogs : [];
+        const latestLogReason = logs.length > 0 ? logs[logs.length - 1]?.reason : '';
+        const reasonText = String(sess.lastViolationReason || latestLogReason || 'Terdeteksi berpindah tab / keluar layar penuh').trim();
+        const isAutoSubmit = cheatCount >= maxViolations || status === 'completed';
+        const detail = `${reasonText} • Pelanggaran ke-${cheatCount}/${maxViolations}${isAutoSubmit ? ' (Auto-Submit)' : ''}`;
+        pushRealtimeAlert(`cheat:${key}:${attemptNumber}:${cheatCount}`, {
+          type: 'cheat',
+          nisn,
+          studentName,
+          studentClass,
+          subject,
+          detail,
+          timestamp: sess.lastViolationAt || sess.updatedAt
+        });
+      }
+
+      const becameCompleted = status === 'completed' && (!prev || prev.status !== 'completed' || (completedAt && completedAt !== prev.completedAt));
+      if (becameCompleted) {
+        const lastDoneMs = realtimeRecentDoneAt.get(key) || 0;
+        if (Date.now() - lastDoneMs > 12000) {
+          realtimeRecentDoneAt.set(key, Date.now());
+          const scoreTxt = sess.finalScore !== undefined && sess.finalScore !== null ? `Nilai Akhir: ${sess.finalScore}` : 'Nilai telah direkap';
+          const reasonLabel = sess.finishReason === 'cheat_limit'
+            ? 'Selesai otomatis (batas pelanggaran)'
+            : (sess.finishReason === 'timeout' ? 'Waktu ujian habis' : 'Diselesaikan siswa');
+          pushRealtimeAlert(`done:${key}:${attemptNumber}:${completedAt}`, {
+            type: 'completed',
+            nisn,
+            studentName,
+            studentClass,
+            subject,
+            detail: `${scoreTxt} • ${reasonLabel}`,
+            timestamp: completedAt || sess.updatedAt
+          });
+        }
+        triggerThrottledCloudResultsRefresh();
+      }
+    }
+
+    realtimeSessionSnapshot.set(key, {
+      cheatCount,
+      status,
+      attemptNumber,
+      completedAt
+    });
+  }
+
+  function processResultInsertDelta(resObj) {
+    if (!resObj || !realtimeBaselineReady) return;
+    const nisn = String(resObj.student?.nisn || resObj.student_nisn || '').trim();
+    if (!nisn || nisn === '__CBT_STATE__') return;
+
+    const studentName = String(resObj.student?.name || resObj.student_name || 'Siswa').trim();
+    const studentClass = String(resObj.student?.class || resObj.student_class || '-').trim();
+    const subject = String(resObj.subject || 'Umum').trim();
+    const key = window.supabaseSync
+      ? window.supabaseSync.buildSessionKey(nisn, subject)
+      : `${nisn.toUpperCase()}__${subject.toLowerCase()}`;
+
+    const lastDoneMs = realtimeRecentDoneAt.get(key) || 0;
+    if (Date.now() - lastDoneMs <= 12000) {
+      triggerThrottledCloudResultsRefresh();
+      return;
+    }
+
+    realtimeRecentDoneAt.set(key, Date.now());
+    const completedAt = String(resObj.completedAt || new Date().toISOString());
+    const scoreTxt = resObj.finalScore !== undefined && resObj.finalScore !== null ? `Nilai Akhir: ${resObj.finalScore}` : 'Nilai telah masuk';
+    const cheatInfo = Number(resObj.cheatCount || 0) > 0 ? ` • ${resObj.cheatCount}x pelanggaran` : '';
+    const reasonLabel = resObj.finishReason === 'cheat_limit'
+      ? 'Auto-submit pelanggaran'
+      : (resObj.finishReason === 'timeout' ? 'Waktu habis' : 'Diselesaikan siswa');
+
+    pushRealtimeAlert(`result:${key}:${completedAt}`, {
+      type: 'completed',
+      nisn,
+      studentName,
+      studentClass,
+      subject,
+      detail: `${scoreTxt} • ${reasonLabel}${cheatInfo}`,
+      timestamp: completedAt
+    });
+    triggerThrottledCloudResultsRefresh();
+  }
+
+  async function pollRealtimeStudentEvents(isBaseline = false) {
+    if (!window.supabaseSync || !viewAdmin || viewAdmin.classList.contains('hidden')) return;
+    try {
+      const res = await window.supabaseSync.fetchStudentSessions();
+      const sessions = res && Array.isArray(res.data) ? res.data : [];
+      sessions.forEach(sess => processSessionDelta(sess, !isBaseline && realtimeBaselineReady));
+      if (isBaseline) {
+        realtimeBaselineReady = true;
+      }
+    } catch (e) {
+      if (isBaseline) realtimeBaselineReady = true;
+    }
+  }
+
+  function startAdminRealtimeNotifications() {
+    if (realtimeNotifActive) return;
+    if (!viewAdmin || viewAdmin.classList.contains('hidden')) return;
+
+    realtimeNotifActive = true;
+    realtimeBaselineReady = false;
+    updateRealtimeNotifVisibility(true);
+
+    pollRealtimeStudentEvents(true);
+
+    if (window.supabaseSync && window.supabaseSync.isCloudConfigured() && typeof window.supabaseSync.subscribeToRealtimeNotifications === 'function') {
+      window.supabaseSync.subscribeToRealtimeNotifications(
+        (sess) => processSessionDelta(sess, true),
+        (resObj) => processResultInsertDelta(resObj)
+      );
+    }
+
+    realtimePollTimer = setInterval(() => {
+      if (!viewAdmin || viewAdmin.classList.contains('hidden')) {
+        stopAdminRealtimeNotifications();
+        return;
+      }
+      pollRealtimeStudentEvents(false);
+    }, 6000);
+  }
+
+  function stopAdminRealtimeNotifications() {
+    realtimeNotifActive = false;
+    if (realtimePollTimer) {
+      clearInterval(realtimePollTimer);
+      realtimePollTimer = null;
+    }
+    if (window.supabaseSync && typeof window.supabaseSync.unsubscribeRealtimeNotifications === 'function') {
+      window.supabaseSync.unsubscribeRealtimeNotifications();
+    }
+  }
+
+  function resetAdminRealtimeStateOnLogout() {
+    stopAdminRealtimeNotifications();
+    realtimeBaselineReady = false;
+    realtimeSessionSnapshot.clear();
+    realtimeEmittedEventKeys.clear();
+    realtimeRecentDoneAt.clear();
+    realtimeNotifs = [];
+    realtimeUnreadCount = 0;
+    const stack = document.getElementById('cbtRealtimeToastStack');
+    if (stack) stack.innerHTML = '';
+    updateRealtimeNotifVisibility(false);
+    renderRealtimeNotifList();
+  }
+
+  function setupRealtimeNotificationControls() {
+    if (realtimeControlsInitialized) return;
+    realtimeControlsInitialized = true;
+
+    const container = document.getElementById('realtimeNotifContainer');
+    const bellBtn = document.getElementById('btnRealtimeNotifBell');
+    const dropdown = document.getElementById('realtimeNotifDropdown');
+    const soundBtn = document.getElementById('btnToggleNotifSound');
+    const clearBtn = document.getElementById('btnClearRealtimeNotifs');
+
+    if (bellBtn && dropdown) {
+      bellBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = dropdown.classList.contains('hidden');
+        dropdown.classList.toggle('hidden');
+        if (willOpen) {
+          realtimeUnreadCount = 0;
+          updateRealtimeBadgeAndSoundUi();
+          renderRealtimeNotifList();
+        }
+      });
+    }
+
+    document.addEventListener('click', (e) => {
+      if (dropdown && !dropdown.classList.contains('hidden') && container && !container.contains(e.target)) {
+        dropdown.classList.add('hidden');
+      }
+    });
+
+    if (soundBtn) {
+      soundBtn.addEventListener('click', () => {
+        realtimeSoundEnabled = !realtimeSoundEnabled;
+        try { localStorage.setItem('cbt_notif_sound', realtimeSoundEnabled ? 'on' : 'off'); } catch (e) {}
+        updateRealtimeBadgeAndSoundUi();
+        if (realtimeSoundEnabled) playRealtimeNotifSound('completed');
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        realtimeNotifs = [];
+        realtimeUnreadCount = 0;
+        updateRealtimeBadgeAndSoundUi();
+        renderRealtimeNotifList();
+      });
+    }
+
+    document.querySelectorAll('.notif-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        realtimeFilterMode = btn.getAttribute('data-notif-filter') || 'ALL';
+        document.querySelectorAll('.notif-filter-btn').forEach(b => {
+          const active = (b.getAttribute('data-notif-filter') || 'ALL') === realtimeFilterMode;
+          b.className = active
+            ? 'notif-filter-btn px-2.5 py-1 rounded-lg bg-blue-600 text-white cursor-pointer transition'
+            : 'notif-filter-btn px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer transition';
+        });
+        renderRealtimeNotifList();
+      });
+    });
+
+    window.addEventListener('storage', (e) => {
+      if (!realtimeNotifActive) return;
+      if (e.key === 'cbt_local_student_sessions' && e.newValue) {
+        try {
+          const list = JSON.parse(e.newValue);
+          if (Array.isArray(list)) list.forEach(sess => processSessionDelta(sess, true));
+        } catch (err) {}
+      }
+    });
+
+    updateRealtimeBadgeAndSoundUi();
   }
 
   init();

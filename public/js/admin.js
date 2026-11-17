@@ -113,6 +113,16 @@ class CBTAdmin {
 
   saveTeachers(teachersList, skipCloudPush = false) {
     this.teachers = teachersList;
+    if (this.currentTeacher && this.currentTeacher.id) {
+      const updatedSelf = this.teachers.find(t => t.id === this.currentTeacher.id);
+      if (updatedSelf) {
+        this.currentTeacher = updatedSelf;
+        try {
+          localStorage.setItem('cbt_logged_teacher_session', JSON.stringify(updatedSelf));
+          sessionStorage.setItem('cbt_logged_teacher', JSON.stringify(updatedSelf));
+        } catch (e) {}
+      }
+    }
     localStorage.setItem('cbt_teachers_list', JSON.stringify(this.teachers));
     if (!skipCloudPush && typeof window !== 'undefined' && window.supabaseSync) {
       window.supabaseSync.pushStateKey('cbt_teachers_list', this.teachers);
@@ -123,34 +133,48 @@ class CBTAdmin {
     return this.teachers;
   }
 
+  splitSubjectTokens(rawStr) {
+    const raw = String(rawStr || '').trim();
+    if (!raw || raw === '-' || raw === '—') return [];
+    const protectedStr = raw.replace(/Pendidikan Jasmani,\s*Olahraga/gi, 'Pendidikan Jasmani__COMMA__Olahraga');
+    return protectedStr
+      .split(/[,/;]+/)
+      .map(s => s.replace(/__COMMA__/g, ', ').trim())
+      .filter(s => {
+        if (!s) return false;
+        const low = s.toLowerCase();
+        return low !== '-' && low !== '—' && low !== 'umum' && !low.includes('semua') && !low.includes('super admin');
+      });
+  }
+
   getAllSubjects() {
     const subjectsSet = new Set();
 
     if (window.examEngine && window.examEngine.config && window.examEngine.config.subject) {
-      subjectsSet.add(window.examEngine.config.subject.trim());
+      this.splitSubjectTokens(window.examEngine.config.subject).forEach(p => subjectsSet.add(p));
     }
 
     if (Array.isArray(this.teachers)) {
       this.teachers.forEach(t => {
-        if (t.role !== 'admin' && t.subject && !t.subject.toLowerCase().includes('semua')) {
-          const parts = t.subject.split(/[,/]/).map(s => s.trim()).filter(Boolean);
-          parts.forEach(p => subjectsSet.add(p));
-          subjectsSet.add(t.subject.trim());
+        if (t.role !== 'admin' && t.id !== 'admin' && t.subject && !t.subject.toLowerCase().includes('semua')) {
+          this.splitSubjectTokens(t.subject).forEach(p => subjectsSet.add(p));
         }
       });
     }
 
     if (Array.isArray(this.schedules)) {
       this.schedules.forEach(s => {
-        if (s.subject) subjectsSet.add(s.subject.trim());
+        if (s.subject) {
+          this.splitSubjectTokens(s.subject).forEach(p => subjectsSet.add(p));
+        }
       });
     }
 
     try {
       if (window.examEngine && Array.isArray(window.examEngine.questions)) {
         window.examEngine.questions.forEach(q => {
-          if (q.subject && String(q.subject).trim().toLowerCase() !== 'umum') {
-            subjectsSet.add(String(q.subject).trim());
+          if (q.subject) {
+            this.splitSubjectTokens(q.subject).forEach(p => subjectsSet.add(p));
           }
         });
       }
@@ -159,7 +183,9 @@ class CBTAdmin {
     try {
       const rawResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
       rawResults.forEach(r => {
-        if (r.subject) subjectsSet.add(r.subject.trim());
+        if (r.subject) {
+          this.splitSubjectTokens(r.subject).forEach(p => subjectsSet.add(p));
+        }
       });
     } catch (e) {}
 
@@ -169,10 +195,7 @@ class CBTAdmin {
   getTeacherSubjectsList(teacher = null) {
     const t = teacher || this.getCurrentTeacher();
     if (!t || t.role === 'admin' || t.id === 'admin') return [];
-    return String(t.subject || '')
-      .split(/[,/]/)
-      .map(s => s.trim())
-      .filter(Boolean);
+    return this.splitSubjectTokens(t.subject);
   }
 
   parseTeacherClasses(classesStr) {
@@ -382,6 +405,8 @@ class CBTAdmin {
 
     this.isAuthenticated = true;
     this.currentTeacher = teacher;
+    this.selectedSubjectFilter = 'ALL';
+    this.selectedClassFilter = 'ALL';
     try {
       localStorage.setItem('cbt_logged_teacher_session', JSON.stringify(teacher));
       sessionStorage.setItem('cbt_logged_teacher', JSON.stringify(teacher));
@@ -392,6 +417,9 @@ class CBTAdmin {
   getCurrentTeacher() {
     if (!this.currentTeacher) {
       this.currentTeacher = this.restoreSession();
+    } else if (this.currentTeacher.id && Array.isArray(this.teachers)) {
+      const fresh = this.teachers.find(t => t.id === this.currentTeacher.id);
+      if (fresh) this.currentTeacher = fresh;
     }
     return this.currentTeacher;
   }
@@ -691,16 +719,27 @@ class CBTAdmin {
 
     const cur = this.getCurrentTeacher();
     const isSuperAdmin = cur && (cur.role === 'admin' || cur.id === 'admin');
+    const matchesSub = (a, b) => {
+      const sa = String(a || '').trim().toLowerCase();
+      const sb = String(b || '').trim().toLowerCase();
+      if (!sa || !sb || sa === '-' || sb === '-' || sa === '—' || sb === '—') return false;
+      if (window.examEngine && typeof window.examEngine.matchesSubject === 'function') {
+        return window.examEngine.matchesSubject(sa, sb);
+      }
+      return sa === sb || sa.includes(sb) || sb.includes(sa);
+    };
 
-    if (sf && sf !== 'ALL') {
-      filtered = filtered.filter(r => r.subject && r.subject.toLowerCase().trim() === sf.toLowerCase().trim());
-    } else if (!isSuperAdmin && cur && cur.subject) {
-      const parts = cur.subject.split(/[,/]/).map(s => s.trim().toLowerCase()).filter(Boolean);
-      filtered = filtered.filter(r => {
-        if (!r.subject) return false;
-        const rSub = r.subject.toLowerCase().trim();
-        return parts.some(p => rSub === p || rSub.includes(p) || p.includes(rSub));
-      });
+    if (!isSuperAdmin) {
+      const ownedSubjects = this.getTeacherSubjectsList(cur);
+      if (ownedSubjects.length === 0) return [];
+      filtered = filtered.filter(r => r.subject && ownedSubjects.some(os => matchesSub(r.subject, os)));
+
+      if (sf && sf !== 'ALL') {
+        if (!ownedSubjects.some(os => matchesSub(sf, os))) return [];
+        filtered = filtered.filter(r => r.subject && matchesSub(r.subject, sf));
+      }
+    } else if (sf && sf !== 'ALL') {
+      filtered = filtered.filter(r => r.subject && matchesSub(r.subject, sf));
     }
 
     const teacherClasses = (!isSuperAdmin && cur && cur.classes) ? this.parseTeacherClasses(cur.classes) : [];
@@ -918,10 +957,11 @@ class CBTAdmin {
 
     if (typeof html2pdf !== 'undefined') {
       const opt = {
-        margin: [8, 8, 8, 8],
+        margin: [6, 8, 6, 8],
         filename: `Laporan_Rekap_Nilai_CBT_${Date.now()}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
+        pagebreak: { mode: ['css', 'legacy'], avoid: ['#repSignatureBlock', '#repSummaryBox', '#repAutoPrintNote', '#repTableBody tr'] },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
       };
 
@@ -1033,16 +1073,16 @@ class CBTAdmin {
           : '<span style="color:#64748b; font-size:9px;">-</span>';
 
         return `
-          <tr style="border-bottom:1px solid #cbd5e1; font-size:10px;">
-            <td style="padding:5px; border:1px solid #cbd5e1; text-align:center; font-weight:700;">${idx + 1}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; font-weight:700;">${r.student?.name || '-'}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; font-family:monospace;">${r.student?.nisn || '-'}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; text-align:center;">${r.student?.class || '-'}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; text-align:center; font-weight:900; font-size:12px; color:${r.finalScore >= 75 ? '#15803d' : '#dc2626'};">${r.finalScore}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; line-height:1.4;">${ansHtml}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; text-align:center;">${r.completedAt}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; text-align:center;">${r.correctCount} / ${r.incorrectCount} / ${r.unattemptedCount}</td>
-            <td style="padding:5px; border:1px solid #cbd5e1; text-align:center;">${(r.cheatCount || 0) > 0 ? r.cheatCount + 'x Tab' : 'Tertib'}</td>
+          <tr style="border-bottom:1px solid #cbd5e1; font-size:10px; break-inside:avoid; page-break-inside:avoid;">
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; text-align:center; font-weight:700;">${idx + 1}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; font-weight:700;">${r.student?.name || '-'}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; font-family:monospace;">${r.student?.nisn || '-'}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; text-align:center;">${r.student?.class || '-'}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; text-align:center; font-weight:900; font-size:12px; color:${r.finalScore >= 75 ? '#15803d' : '#dc2626'};">${r.finalScore}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; line-height:1.35;">${ansHtml}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; text-align:center;">${r.completedAt}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; text-align:center;">${r.correctCount} / ${r.incorrectCount} / ${r.unattemptedCount}</td>
+            <td style="padding:4px 5px; border:1px solid #cbd5e1; text-align:center;">${(r.cheatCount || 0) > 0 ? r.cheatCount + 'x Tab' : 'Tertib'}</td>
           </tr>
         `;
       }).join('');
@@ -1639,8 +1679,8 @@ class CBTAdmin {
         </div>
       `;
     } else {
-      const rawOpts = Array.isArray(q.options) ? q.options : [];
-      const nonEmptyOpts = rawOpts.filter(opt => String(opt && opt.text ? opt.text : '').trim() !== '');
+      const rawOpts = (Array.isArray(q.options) ? q.options : []).filter(opt => opt && String(opt.key || '').trim().toUpperCase() !== 'E');
+      const nonEmptyOpts = rawOpts.filter(opt => String(opt.text || '').trim() !== '');
       const opts = nonEmptyOpts.length > 0 ? nonEmptyOpts : rawOpts;
       const optRows = opts.map(opt => {
         const lowerKey = String(opt.key || 'a').toLowerCase();
@@ -2297,6 +2337,540 @@ class CBTAdmin {
         document.body.classList.remove('printing-questions');
       }, 1000);
     }, 250);
+  }
+
+  // ===================== ANALISIS BUTIR SOAL (TINGKAT KESUKARAN & DAYA PEMBEDA) =====================
+  computeItemAnalysis(questionsList = []) {
+    const rawResults = JSON.parse(localStorage.getItem('cbt_exam_results') || '[]');
+    const validResults = Array.isArray(rawResults)
+      ? rawResults.filter(r => r && r.student?.nisn !== '__CBT_STATE__' && r.examTitle !== '__CBT_LIVE_SESSION__' && Array.isArray(r.detailedAnswers) && r.detailedAnswers.length > 0)
+      : [];
+
+    // Ambil 1 entri paling relevan (terbaru) per kombinasi siswa + mapel agar peserta pengulang tidak menggandakan bobot
+    const uniqueResultMap = new Map();
+    validResults.forEach(r => {
+      const nisn = String(r.student?.nisn || r.student?.name || '').trim().toUpperCase();
+      const subj = String(r.subject || '').trim().toLowerCase();
+      const key = `${nisn}__${subj}`;
+      if (!uniqueResultMap.has(key)) {
+        uniqueResultMap.set(key, r);
+      }
+    });
+    const dedupedResults = Array.from(uniqueResultMap.values());
+
+    const normalizeText = (txt) => String(txt || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+    const items = (questionsList || []).map((q, idx) => {
+      const qId = q.id;
+      const qTextNorm = normalizeText(q.question);
+      const qSubjNorm = String(q.subject || '').trim().toLowerCase();
+
+      const observations = [];
+
+      dedupedResults.forEach(res => {
+        const resSubjNorm = String(res.subject || '').trim().toLowerCase();
+        const details = res.detailedAnswers || [];
+        let matchedDetail = details.find(d => d && d.questionId && qId && String(d.questionId) === String(qId));
+
+        if (!matchedDetail && qTextNorm) {
+          const sameSubject = !qSubjNorm || qSubjNorm === 'umum' || resSubjNorm === qSubjNorm || resSubjNorm.includes(qSubjNorm) || qSubjNorm.includes(resSubjNorm);
+          if (sameSubject) {
+            matchedDetail = details.find(d => d && normalizeText(d.questionText) === qTextNorm);
+          }
+        }
+
+        if (!matchedDetail) return;
+
+        const maxScore = Number(matchedDetail.maxScore || q.weight || 10);
+        let itemScore = 0;
+        if (maxScore > 0 && matchedDetail.earnedScore !== undefined && matchedDetail.earnedScore !== null) {
+          itemScore = Math.min(1, Math.max(0, Number(matchedDetail.earnedScore) / maxScore));
+        } else {
+          itemScore = (matchedDetail.isFullyCorrect || matchedDetail.status === 'correct') ? 1 : 0;
+        }
+
+        observations.push({
+          nisn: String(res.student?.nisn || ''),
+          totalScore: Number(res.finalScore || 0),
+          itemScore,
+          status: matchedDetail.status || (itemScore >= 0.999 ? 'correct' : 'incorrect')
+        });
+      });
+
+      const n = observations.length;
+      const correctCount = observations.filter(o => o.itemScore >= 0.999 || o.status === 'correct').length;
+      const partialCount = observations.filter(o => o.itemScore > 0 && o.itemScore < 0.999).length;
+      const unattemptedCount = observations.filter(o => o.status === 'unattempted').length;
+      const incorrectCount = Math.max(0, n - correctCount - partialCount - unattemptedCount);
+
+      let difficulty = null;
+      let difficultyLabel = 'Belum Ada Data';
+      let difficultyTone = 'slate';
+
+      if (n > 0) {
+        const sumScore = observations.reduce((acc, o) => acc + o.itemScore, 0);
+        difficulty = Math.round((sumScore / n) * 100) / 100;
+        if (difficulty < 0.30) {
+          difficultyLabel = 'Sukar';
+          difficultyTone = 'rose';
+        } else if (difficulty <= 0.70) {
+          difficultyLabel = 'Sedang';
+          difficultyTone = 'emerald';
+        } else {
+          difficultyLabel = 'Mudah';
+          difficultyTone = 'sky';
+        }
+      }
+
+      let discrimination = null;
+      let discriminationLabel = n === 1 ? 'Min. 2 Siswa' : 'Belum Ada Data';
+      let discriminationTone = 'slate';
+      let upperRate = null;
+      let lowerRate = null;
+      let groupSize = 0;
+
+      if (n >= 2) {
+        const sorted = [...observations].sort((a, b) => {
+          if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+          return b.itemScore - a.itemScore;
+        });
+        groupSize = n >= 20 ? Math.max(1, Math.round(n * 0.27)) : Math.max(1, Math.floor(n / 2));
+        const upperGroup = sorted.slice(0, groupSize);
+        const lowerGroup = sorted.slice(sorted.length - groupSize);
+
+        upperRate = upperGroup.reduce((acc, o) => acc + o.itemScore, 0) / groupSize;
+        lowerRate = lowerGroup.reduce((acc, o) => acc + o.itemScore, 0) / groupSize;
+        discrimination = Math.round((upperRate - lowerRate) * 100) / 100;
+
+        if (discrimination < 0) {
+          discriminationLabel = 'Negatif';
+          discriminationTone = 'red';
+        } else if (discrimination < 0.20) {
+          discriminationLabel = 'Jelek';
+          discriminationTone = 'orange';
+        } else if (discrimination < 0.30) {
+          discriminationLabel = 'Cukup';
+          discriminationTone = 'amber';
+        } else if (discrimination < 0.40) {
+          discriminationLabel = 'Baik';
+          discriminationTone = 'blue';
+        } else {
+          discriminationLabel = 'Sangat Baik';
+          discriminationTone = 'emerald';
+        }
+      }
+
+      let qualityStatus = 'no_data';
+      let qualityLabel = 'Belum Ada Data';
+      let recommendation = 'Belum ada data hasil ujian siswa yang memuat butir soal ini.';
+
+      if (n === 1) {
+        qualityStatus = 'no_data';
+        qualityLabel = 'Data Minim (1 Siswa)';
+        recommendation = 'Butuh minimal 2 siswa menyelesaikan ujian untuk menghitung daya pembeda.';
+      } else if (n >= 2) {
+        if (discrimination < 0) {
+          qualityStatus = 'bad';
+          qualityLabel = 'Bermasalah (D < 0)';
+          recommendation = 'Periksa kunci jawaban atau redaksi soal — kelompok nilai rendah justru lebih banyak benar.';
+        } else if (discrimination < 0.20) {
+          qualityStatus = 'bad';
+          qualityLabel = 'Revisi / Ganti';
+          recommendation = 'Daya pembeda rendah (< 0,20). Soal belum mampu membedakan siswa paham dan belum paham.';
+        } else if (discrimination < 0.30 || difficulty < 0.15 || difficulty > 0.90) {
+          qualityStatus = 'revise';
+          qualityLabel = 'Perlu Revisi';
+          if (difficulty > 0.90) {
+            recommendation = 'Soal terlalu mudah (P > 0,90). Pertajam opsi pengecoh agar lebih menantang.';
+          } else if (difficulty < 0.15) {
+            recommendation = 'Soal terlalu sukar (P < 0,15). Periksa kejelasan kalimat soal atau kesesuaian materi.';
+          } else {
+            recommendation = 'Daya pembeda cukup (0,20–0,29). Perbaiki pengecoh agar mendekati ≥ 0,30.';
+          }
+        } else {
+          qualityStatus = 'good';
+          qualityLabel = 'Layak / Baik';
+          recommendation = 'Kualitas butir soal baik: tingkat kesukaran dan daya pembeda sudah ideal.';
+        }
+      }
+
+      return {
+        index: idx + 1,
+        questionId: qId,
+        subject: q.subject || 'Umum',
+        classLevel: q.classLevel || 'Semua Kelas',
+        type: q.type || 'single',
+        questionText: q.question || '',
+        n,
+        correctCount,
+        partialCount,
+        incorrectCount,
+        unattemptedCount,
+        difficulty,
+        difficultyLabel,
+        difficultyTone,
+        discrimination,
+        discriminationLabel,
+        discriminationTone,
+        groupSize,
+        upperRate: upperRate !== null ? Math.round(upperRate * 100) / 100 : null,
+        lowerRate: lowerRate !== null ? Math.round(lowerRate * 100) / 100 : null,
+        qualityStatus,
+        qualityLabel,
+        recommendation
+      };
+    });
+
+    const summary = {
+      totalQuestions: items.length,
+      analyzedCount: items.filter(it => it.n >= 2).length,
+      goodCount: items.filter(it => it.qualityStatus === 'good').length,
+      reviseCount: items.filter(it => it.qualityStatus === 'revise').length,
+      badCount: items.filter(it => it.qualityStatus === 'bad').length,
+      noDataCount: items.filter(it => it.qualityStatus === 'no_data').length,
+      totalUniqueRespondents: dedupedResults.length
+    };
+
+    return { items, summary };
+  }
+
+  exportItemAnalysisExcel(analysisItems = [], meta = {}) {
+    if (typeof XLSX === 'undefined') {
+      alert("Library Excel belum dimuat. Pastikan koneksi internet aktif.");
+      return;
+    }
+    if (!analysisItems || analysisItems.length === 0) {
+      alert("Belum ada butir soal untuk diekspor.");
+      return;
+    }
+
+    const schoolCfg = this.getSchoolConfig();
+    const typeLabel = (t) => t === 'multiple' ? 'PG Kompleks' : (t === 'true_false' ? 'Benar/Salah' : 'PG Tunggal');
+
+    const rows = analysisItems.map(it => ({
+      'No': it.index,
+      'Mata Pelajaran': it.subject,
+      'Tingkat/Kelas': it.classLevel,
+      'Tipe Soal': typeLabel(it.type),
+      'Ringkasan Soal': String(it.questionText || '').replace(/\s+/g, ' ').slice(0, 140),
+      'Responden (N)': it.n,
+      'Benar': it.correctCount,
+      'Parsial': it.partialCount,
+      'Salah': it.incorrectCount,
+      'Kosong': it.unattemptedCount,
+      'Tingkat Kesukaran (P)': it.difficulty !== null ? it.difficulty.toFixed(2) : '-',
+      'Kategori Kesukaran': it.difficultyLabel,
+      'Proporsi Kelompok Atas (PA)': it.upperRate !== null ? it.upperRate.toFixed(2) : '-',
+      'Proporsi Kelompok Bawah (PB)': it.lowerRate !== null ? it.lowerRate.toFixed(2) : '-',
+      'Daya Pembeda (D)': it.discrimination !== null ? it.discrimination.toFixed(2) : '-',
+      'Kategori Daya Pembeda': it.discriminationLabel,
+      'Status Kualitas': it.qualityLabel,
+      'Rekomendasi Evaluasi': it.recommendation
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 5 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 46 },
+      { wch: 13 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+      { wch: 20 }, { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 18 },
+      { wch: 20 }, { wch: 20 }, { wch: 45 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Analisis Butir Soal');
+
+    const slug = String(meta.subject || schoolCfg.schoolName || 'Bank_Soal').replace(/[^a-z0-9]+/gi, '_');
+    XLSX.writeFile(wb, `Analisis_Butir_Soal_${slug}_${Date.now()}.xlsx`);
+  }
+
+  // ===================== CEK KELAYAKAN TEKNIS PRA-UJIAN =====================
+  auditQuestionsPreExam(questionsList = []) {
+    const normalizeText = (txt) => String(txt || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+    // Deteksi duplikat teks soal pada mapel yang sama
+    const questionTextCounts = new Map();
+    (questionsList || []).forEach(q => {
+      const qNorm = normalizeText(q.question);
+      if (qNorm.length >= 15) {
+        const key = `${normalizeText(q.subject || 'umum')}__${qNorm}`;
+        questionTextCounts.set(key, (questionTextCounts.get(key) || 0) + 1);
+      }
+    });
+
+    const items = (questionsList || []).map((q, idx) => {
+      const errors = [];
+      const warnings = [];
+      const type = q.type || 'single';
+      const qText = String(q.question || '').trim();
+      const hasImage = Boolean(q.image && String(q.image).trim() !== '');
+
+      if (!qText && !hasImage) {
+        errors.push('Teks pertanyaan dan gambar sama-sama kosong.');
+      } else if (qText && qText.length < 8 && !hasImage) {
+        warnings.push('Teks pertanyaan terlalu singkat (< 8 karakter).');
+      }
+
+      const weight = Number(q.weight);
+      if (!Number.isFinite(weight) || weight <= 0) {
+        errors.push('Bobot nilai soal harus lebih dari 0.');
+      }
+
+      if (type === 'single' || type === 'multiple') {
+        const opts = Array.isArray(q.options) ? q.options : [];
+        if (opts.length < 2) {
+          errors.push('Opsi pilihan jawaban kurang dari 2.');
+        }
+
+        const emptyKeys = opts
+          .filter(o => !o || String(o.text || '').trim() === '')
+          .map(o => o?.key || '?');
+        if (emptyKeys.length > 0) {
+          errors.push(`Teks opsi ${emptyKeys.join(', ')} masih kosong.`);
+        }
+
+        const seenOptTexts = new Map();
+        const dupPairs = [];
+        opts.forEach(o => {
+          const t = normalizeText(o?.text);
+          if (!t) return;
+          if (seenOptTexts.has(t)) {
+            dupPairs.push(`${seenOptTexts.get(t)} & ${o.key || '?'}`);
+          } else {
+            seenOptTexts.set(t, o.key || '?');
+          }
+        });
+        if (dupPairs.length > 0) {
+          errors.push(`Opsi jawaban kembar (${dupPairs.join(', ')}).`);
+        }
+
+        const validKeys = opts.map(o => String(o?.key || '').trim().toUpperCase()).filter(Boolean);
+        if (type === 'single') {
+          const ansKey = String(q.correctAnswer || '').trim().toUpperCase();
+          if (!ansKey) {
+            errors.push('Kunci jawaban PG Tunggal belum dipilih.');
+          } else if (!validKeys.includes(ansKey)) {
+            errors.push(`Kunci jawaban "${ansKey}" tidak cocok dengan opsi tersedia.`);
+          }
+        } else {
+          const ansKeys = Array.isArray(q.correctAnswer)
+            ? q.correctAnswer.map(k => String(k || '').trim().toUpperCase()).filter(Boolean)
+            : (q.correctAnswer ? [String(q.correctAnswer).trim().toUpperCase()] : []);
+          if (ansKeys.length === 0) {
+            errors.push('Kunci jawaban PG Kompleks belum dipilih.');
+          } else {
+            const missingKeys = ansKeys.filter(k => !validKeys.includes(k));
+            if (missingKeys.length > 0) {
+              errors.push(`Kunci "${missingKeys.join(', ')}" tidak ditemukan di opsi.`);
+            }
+            if (ansKeys.length === 1) {
+              warnings.push('PG Kompleks hanya memiliki 1 kunci benar (sebaiknya ≥ 2).');
+            }
+          }
+        }
+      } else if (type === 'true_false') {
+        const stmts = Array.isArray(q.statements) ? q.statements : [];
+        if (stmts.length === 0) {
+          errors.push('Belum ada pernyataan Benar/Salah.');
+        } else {
+          if (stmts.length < 2) {
+            warnings.push('Pernyataan Benar/Salah baru 1 (disarankan minimal 2).');
+          }
+          const emptyStmtCount = stmts.filter(s => !s || String(s.text || '').trim() === '').length;
+          if (emptyStmtCount > 0) {
+            errors.push(`Ada ${emptyStmtCount} pernyataan yang teksnya masih kosong.`);
+          }
+          const invalidCorrectCount = stmts.filter(s => !s || !['B', 'S'].includes(String(s.correct || '').trim().toUpperCase())).length;
+          if (invalidCorrectCount > 0) {
+            errors.push(`Ada ${invalidCorrectCount} pernyataan yang belum punya kunci B/S.`);
+          }
+          const stmtNormSet = new Set();
+          let hasDupStmt = false;
+          stmts.forEach(s => {
+            const t = normalizeText(s?.text);
+            if (!t) return;
+            if (stmtNormSet.has(t)) hasDupStmt = true;
+            stmtNormSet.add(t);
+          });
+          if (hasDupStmt) {
+            warnings.push('Ada pernyataan Benar/Salah yang redaksinya kembar.');
+          }
+        }
+      } else {
+        errors.push(`Tipe soal "${type}" tidak dikenal.`);
+      }
+
+      const subjClean = String(q.subject || '').trim();
+      if (!subjClean || subjClean.toLowerCase() === 'umum') {
+        warnings.push('Mata pelajaran masih Umum/belum ditentukan.');
+      }
+
+      const qNorm = normalizeText(q.question);
+      if (qNorm.length >= 15) {
+        const dupKey = `${normalizeText(q.subject || 'umum')}__${qNorm}`;
+        if ((questionTextCounts.get(dupKey) || 0) > 1) {
+          warnings.push('Redaksi pertanyaan terindikasi duplikat dengan soal lain.');
+        }
+      }
+
+      let status = 'ready';
+      let statusLabel = 'Siap Diujikan';
+      if (errors.length > 0) {
+        status = 'error';
+        statusLabel = 'Perlu Perbaikan';
+      } else if (warnings.length > 0) {
+        status = 'warning';
+        statusLabel = 'Perlu Dicek';
+      }
+
+      return {
+        index: idx + 1,
+        questionId: q.id,
+        subject: q.subject || 'Umum',
+        classLevel: q.classLevel || 'Semua Kelas',
+        type,
+        weight: Number.isFinite(weight) ? weight : 0,
+        questionText: q.question || '',
+        hasImage,
+        errors,
+        warnings,
+        status,
+        statusLabel
+      };
+    });
+
+    const totalQuestions = items.length;
+    const readyCount = items.filter(it => it.status === 'ready').length;
+    const warningCount = items.filter(it => it.status === 'warning').length;
+    const errorCount = items.filter(it => it.status === 'error').length;
+    const totalWeight = items.reduce((acc, it) => acc + (it.weight > 0 ? it.weight : 0), 0);
+    const readyPercent = totalQuestions > 0 ? Math.round((readyCount / totalQuestions) * 100) : 0;
+
+    return {
+      items,
+      summary: {
+        totalQuestions,
+        readyCount,
+        warningCount,
+        errorCount,
+        totalWeight,
+        readyPercent
+      }
+    };
+  }
+
+  exportPreExamAuditExcel(auditItems = [], meta = {}) {
+    if (typeof XLSX === 'undefined') {
+      alert("Library Excel belum dimuat. Pastikan koneksi internet aktif.");
+      return;
+    }
+    if (!auditItems || auditItems.length === 0) {
+      alert("Belum ada butir soal untuk diekspor.");
+      return;
+    }
+
+    const schoolCfg = this.getSchoolConfig();
+    const typeLabel = (t) => t === 'multiple' ? 'PG Kompleks' : (t === 'true_false' ? 'Benar/Salah' : 'PG Tunggal');
+
+    const rows = auditItems.map(it => ({
+      'No': it.index,
+      'Mata Pelajaran': it.subject,
+      'Tingkat/Kelas': it.classLevel,
+      'Tipe Soal': typeLabel(it.type),
+      'Bobot': it.weight,
+      'Ringkasan Soal': String(it.questionText || '').replace(/\s+/g, ' ').slice(0, 140),
+      'Status Kelayakan': it.statusLabel,
+      'Temuan Kritis (Wajib Perbaiki)': it.errors.length > 0 ? it.errors.join(' | ') : '-',
+      'Catatan Tambahan': it.warnings.length > 0 ? it.warnings.join(' | ') : '-'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 5 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 8 },
+      { wch: 46 }, { wch: 18 }, { wch: 42 }, { wch: 38 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cek Kelayakan Pra-Ujian');
+
+    const slug = String(meta.subject || schoolCfg.schoolName || 'Bank_Soal').replace(/[^a-z0-9]+/gi, '_');
+    XLSX.writeFile(wb, `Cek_Pra_Ujian_${slug}_${Date.now()}.xlsx`);
+  }
+
+  getTeacherQuestionProgressList() {
+    const allQuestions = window.examEngine && Array.isArray(window.examEngine.questions)
+      ? window.examEngine.questions
+      : [];
+    const matchesSub = (qSub, target) => (window.examEngine && window.examEngine.matchesSubject)
+      ? window.examEngine.matchesSubject(qSub, target)
+      : String(qSub || '').toLowerCase() === String(target || '').toLowerCase();
+    const matchesCls = (qCls, target) => (window.examEngine && window.examEngine.matchesClassLevel)
+      ? window.examEngine.matchesClassLevel(qCls, target)
+      : true;
+
+    return (this.teachers || [])
+      .filter(t => t && t.role !== 'admin' && t.id !== 'admin')
+      .map(t => {
+        const subjects = this.getTeacherSubjectsList(t);
+        const teacherClasses = t.classes ? this.parseTeacherClasses(t.classes) : [];
+        const teacherNameLow = String(t.name || '').trim().toLowerCase();
+
+        const isTeacherClassMatch = (q) => {
+          if (teacherClasses.length === 0) return true;
+          const qCls = String(q.classLevel || 'Semua Kelas').trim();
+          return matchesCls(qCls, teacherClasses.join(', '));
+        };
+
+        const isCreatedByTeacher = (q) => {
+          const cb = String(q.createdBy || '').trim().toLowerCase();
+          return Boolean(teacherNameLow && cb && cb === teacherNameLow);
+        };
+
+        const subjectBreakdown = subjects.map(subj => {
+          const qs = allQuestions.filter(q => {
+            const qSub = String(q.subject || '').trim();
+            if (!qSub || qSub.toLowerCase() === 'umum') return false;
+            return matchesSub(qSub, subj) && isTeacherClassMatch(q);
+          });
+          return {
+            subject: subj,
+            total: qs.length,
+            createdByMe: qs.filter(isCreatedByTeacher).length,
+            single: qs.filter(q => (q.type || 'single') === 'single').length,
+            multiple: qs.filter(q => q.type === 'multiple').length,
+            trueFalse: qs.filter(q => q.type === 'true_false').length
+          };
+        });
+
+        const uniqueMatchingIds = new Set();
+        const matchingQuestions = [];
+        allQuestions.forEach((q, idx) => {
+          const qSub = String(q.subject || '').trim();
+          if (!qSub || qSub.toLowerCase() === 'umum') return;
+          if (!isTeacherClassMatch(q)) return;
+          if (subjects.some(subj => matchesSub(qSub, subj))) {
+            const key = q.id !== undefined ? String(q.id) : `idx_${idx}`;
+            if (!uniqueMatchingIds.has(key)) {
+              uniqueMatchingIds.add(key);
+              matchingQuestions.push(q);
+            }
+          }
+        });
+
+        const createdByCount = matchingQuestions.filter(isCreatedByTeacher).length;
+
+        return {
+          teacher: t,
+          subjects,
+          teacherClasses,
+          totalQuestions: matchingQuestions.length,
+          createdByCount,
+          singleCount: matchingQuestions.filter(q => (q.type || 'single') === 'single').length,
+          multipleCount: matchingQuestions.filter(q => q.type === 'multiple').length,
+          trueFalseCount: matchingQuestions.filter(q => q.type === 'true_false').length,
+          subjectBreakdown
+        };
+      })
+      .sort((a, b) => String(a.teacher.name || '').localeCompare(String(b.teacher.name || ''), 'id'));
   }
 }
 

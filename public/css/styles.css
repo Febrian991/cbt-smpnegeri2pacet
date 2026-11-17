@@ -150,6 +150,35 @@ body.exam-locked img {
 }
 
 /* ==========================================================================
+   COOL SLATE & BIRU SEKOLAH LIGHT MODE (Anti-Glare Comfort)
+   ========================================================================== */
+@media screen {
+  html:not(.dark) .bg-white:not([class*="bg-gradient-"]):not(.naskah-paper-sheet) {
+    background-color: #ecf1f8 !important;
+  }
+
+  html:not(.dark) .bg-slate-50:not([class*="bg-gradient-"]):not(.naskah-paper-sheet) {
+    background-color: #dce5f2 !important;
+  }
+
+  html:not(.dark) .border-slate-200:not(.naskah-paper-sheet),
+  html:not(.dark) .border-slate-100:not(.naskah-paper-sheet) {
+    border-color: #b7c6db !important;
+  }
+
+  html:not(.dark) tbody tr:nth-child(even) {
+    background-color: #e3ebf6;
+  }
+
+  html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([class*="bg-slate-"]),
+  html:not(.dark) select:not([class*="bg-slate-"]),
+  html:not(.dark) textarea:not([class*="bg-slate-"]) {
+    background-color: #f8fafd !important;
+    border-color: #aebfd6 !important;
+  }
+}
+
+/* ==========================================================================
    ERGONOMIC DARK MODE (Tailwind class="dark" + Dynamic Content Surfaces)
    Soft Slate Palette (#0f172a / #1e293b) for Low-Light Classroom Comfort
    ========================================================================== */
