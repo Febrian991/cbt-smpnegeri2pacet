@@ -80,3 +80,28 @@ CREATE INDEX IF NOT EXISTS idx_cbt_questions_subject ON cbt_questions(subject);
 ALTER TABLE cbt_questions ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all on questions" ON cbt_questions FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE cbt_questions REPLICA IDENTITY FULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'cbt_questions'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE cbt_questions;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'cbt_student_sessions'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE cbt_student_sessions;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'cbt_exam_results'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE cbt_exam_results;
+  END IF;
+END $$;
+
